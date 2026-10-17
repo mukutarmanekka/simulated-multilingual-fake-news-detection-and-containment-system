@@ -12,6 +12,7 @@ Subcommands are added phase by phase:
 import argparse
 
 from . import config
+from .data.posts import generate_posts, print_posts_summary, save_posts
 from .network.graph_builder import (
     build_language_graph,
     print_graph_summary,
@@ -27,6 +28,14 @@ def cmd_graph(args) -> None:
     print(f"graph saved to {config.GRAPH_PATH}")
 
 
+def cmd_posts(args) -> None:
+    G = build_language_graph()
+    posts = generate_posts(G)
+    print_posts_summary(posts)
+    save_posts(posts)
+    print(f"posts saved to {config.POSTS_PATH}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="verifacto",
@@ -36,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub_graph = subparsers.add_parser("graph", help="build and save the language-block network")
     sub_graph.set_defaults(func=cmd_graph)
+
+    sub_posts = subparsers.add_parser("posts", help="generate and save the post corpus")
+    sub_posts.set_defaults(func=cmd_posts)
 
     return parser
 

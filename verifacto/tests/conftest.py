@@ -7,9 +7,15 @@ whole suite is deterministic.
 
 import pytest
 
+from verifacto.data.posts import generate_posts
 from verifacto.network.graph_builder import build_language_graph
 
 
 @pytest.fixture(scope="session")
 def graph():
     return build_language_graph()
+
+
+@pytest.fixture(scope="session")
+def posts(graph):
+    return generate_posts(graph)

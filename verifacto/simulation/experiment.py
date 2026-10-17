@@ -27,12 +27,15 @@ class PostRunResult:
         return sum(self.newly_reached_by_step)
 
 
-def build_strategy_p_maps(G, detection, strategy, n_runs):
+def build_strategy_p_maps(G, detection, strategy, n_runs, k=K_BUDGET, selected=None):
     """Probability map per run for one strategy and one post's detection.
 
     Returns {run: p_map}; a p_map of None means "use the graph's edge p"
     (the baseline). Targeted strategies throttle only posts whose
-    detection is fake; blanket halves them everywhere.
+    detection is fake; blanket halves them everywhere. `selected` is the
+    precomputed throttled-user list for deterministic methods (computed
+    once on the original graph by the caller); when omitted it is
+    computed here.
     """
     is_fake = detection is not None and detection.is_fake is True
 
@@ -52,11 +55,12 @@ def build_strategy_p_maps(G, detection, strategy, n_runs):
         if strategy == "random":
             p_maps = {}
             for run in range(n_runs):
-                selected = select_top_k(G, "random", K_BUDGET, seed=cascade_seed(0, run))
-                p_maps[run] = build_prob_map(G, 1.0, throttled=selected)
+                chosen = select_top_k(G, "random", k, seed=cascade_seed(0, run))
+                p_maps[run] = build_prob_map(G, 1.0, throttled=chosen)
             return p_maps
         # deterministic selections: computed once, shared across runs
-        selected = select_top_k(G, strategy, K_BUDGET)
+        if selected is None:
+            selected = select_top_k(G, strategy, k)
         p_map = build_prob_map(G, 1.0, throttled=selected)
         return {run: p_map for run in range(n_runs)}
 

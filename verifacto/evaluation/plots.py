@@ -117,3 +117,39 @@ def plot_reach_curves(
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, facecolor=CHROME["surface"])
     plt.close(fig)
+
+
+def plot_fp_cost_bar(costs, out_path):
+    """False-positive cost per strategy: two stacked panels, one figure.
+
+    `costs` is a list of {"label": str, "real_reach_lost_mean": float,
+    "fp_count": int} in strategy order. Real-news reach lost and the
+    number of wrongly flagged real posts are different measures, so each
+    gets its own panel (no dual axis).
+    """
+    labels = [cost["label"] for cost in costs]
+    lost = [cost["real_reach_lost_mean"] for cost in costs]
+    counts = [cost["fp_count"] for cost in costs]
+    x = np.arange(len(costs))
+
+    fig, (ax_lost, ax_count) = plt.subplots(
+        2, 1, figsize=(9, 7), sharex=True
+    )
+    _style_axes(ax_lost, "False-positive cost of containment", "strategy", "mean real-news reach lost (users)")
+    _style_axes(ax_count, "", "strategy", "real posts wrongly flagged")
+
+    for index in range(len(costs)):
+        color = SERIES_COLORS[index % len(SERIES_COLORS)]
+        ax_lost.bar(x[index], lost[index], width=0.6, color=color)
+        ax_count.bar(x[index], counts[index], width=0.6, color=color)
+
+    ax_lost.set_xticks(x)
+    ax_lost.set_xticklabels(labels, rotation=30, ha="right", color=CHROME["secondary"])
+    ax_count.set_xticks(x)
+    ax_count.set_xticklabels(labels, rotation=30, ha="right", color=CHROME["secondary"])
+    # baseline by definition has no false-positive cost; show the honest zero
+    ax_lost.axhline(0, color=CHROME["axis"], linewidth=1)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, facecolor=CHROME["surface"])
+    plt.close(fig)

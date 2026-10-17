@@ -39,19 +39,33 @@ class RealDetectorAdapter:
         self._input_type = InputType
         self._llm_service = llm_service
 
-    def detect(self, text, language, post_id):
+    async def run_job(self, text, language, post_id):
+        """Run the pipeline and return the raw job response (async)."""
         self._import_pipeline()
         ensure_real_provider(self._llm_service.provider)
-        response = asyncio.run(
-            self._orchestrator().run(
-                input_text=text,
-                input_type=self._input_type.SOCIAL_MEDIA,
-                job_id=f"verifacto-{post_id}",
-            )
+        response = await self._orchestrator().run(
+            input_text=text,
+            input_type=self._input_type.SOCIAL_MEDIA,
+            job_id=f"verifacto-{post_id}",
         )
         # the pipeline could flip to mock mid-run; check again before use
         ensure_real_provider(self._llm_service.provider)
+        return response
+
+    async def detect_async(self, text, language, post_id):
+        """One detection, awaited inside a caller-owned event loop."""
+        response = await self.run_job(text, language, post_id)
         results = [claim.model_dump() for claim in response.results]
         return map_job_results(
             results, CONFIDENCE_THRESHOLD, provider=self._llm_service.provider
         )
+
+    def detect(self, text, language, post_id):
+        """Synchronous facade for a single detection.
+
+        Batched callers should use detect_async inside ONE event loop:
+        the pipeline binds its global clients (DB engine, HTTP clients)
+        to the first loop it sees, and repeated asyncio.run() calls
+        break them.
+        """
+        return asyncio.run(self.detect_async(text, language, post_id))

@@ -15,9 +15,13 @@ import json
 import numpy as np
 
 from . import config
+from .containment.heuristics import precompute_centralities, top_k_from_scores
 from .data.posts import generate_posts, load_posts, print_posts_summary, save_posts
+from .detector.replay import ReplayDetector
+from .detector.real_adapter import RealDetectorAdapter
 from .detector.stub import StubDetector
-from .evaluation.plots import plot_reach_curves
+from .evaluation.metrics import build_summary_table, false_positive_cost
+from .evaluation.plots import plot_fp_cost_bar, plot_reach_curves
 from .network.graph_builder import (
     build_language_graph,
     load_graph,
@@ -26,7 +30,9 @@ from .network.graph_builder import (
 )
 from .simulation.cascade import run_ic_cascade
 from .simulation.experiment import build_strategy_p_maps, run_post_experiment
-from .simulation.intervention import run_detection
+from .simulation.intervention import run_detection, select_top_k
+
+STRATEGY_ORDER = ["baseline", "blanket", "random", "degree", "betweenness", "pagerank"]
 
 
 def _load_or_build_graph():
@@ -169,6 +175,121 @@ def cmd_blanket(args) -> None:
     print(f"plot saved to {config.OUTPUT_DIR / 'blanket_vs_baseline.png'}")
 
 
+def _build_detector(args, posts):
+    if args.detector == "stub":
+        return StubDetector(posts)
+    if args.detector == "replay":
+        if not config.CACHE_PATH.exists():
+            print("no detector cache found — run `python -m verifacto.main precompute` first")
+            raise SystemExit(1)
+        return ReplayDetector()
+    if args.detector == "real":
+        if not args.allow_live:
+            print("live detection is slow and non-deterministic; pass --allow-live to proceed")
+            raise SystemExit(1)
+        return RealDetectorAdapter()
+    raise ValueError(f"unknown detector: {args.detector}")
+
+
+def cmd_targeted(args) -> None:
+    G = _load_or_build_graph()
+    posts = _load_or_generate_posts(G)
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    n_runs = args.runs
+    k = args.k
+
+    detector = _build_detector(args, posts)
+    print(f"detector: {args.detector}")
+    detections = run_detection(detector, posts)
+
+    # centralities computed once on the original graph, shared by all posts
+    centralities = precompute_centralities(G)
+    selected_by_strategy = {
+        method: top_k_from_scores(centralities[method], k)
+        for method in ("degree", "betweenness", "pagerank")
+    }
+
+    results = {}
+    for strategy in STRATEGY_ORDER:
+        results[strategy] = {}
+        for post in posts:
+            p_maps = build_strategy_p_maps(
+                G,
+                detections[post.id],
+                strategy,
+                n_runs,
+                k=k,
+                selected=selected_by_strategy.get(strategy),
+            )
+            results[strategy][post.id] = run_post_experiment(
+                G, post, p_maps, n_runs, strategy
+            )
+
+    users_throttled = {
+        strategy: (k if strategy in ("random", "degree", "betweenness", "pagerank") else 0)
+        for strategy in STRATEGY_ORDER
+    }
+    table = build_summary_table(G, posts, detections, results, n_runs, users_throttled)
+
+    print("\n=== strategy comparison (fake posts, mean ± std over runs) ===")
+    for strategy in STRATEGY_ORDER:
+        row = table[strategy]
+        print(
+            f"{strategy:>11}: final fraction {row['final_fraction_reached']['mean']:.3f} "
+            f"± {row['final_fraction_reached']['std']:.3f} | peak "
+            f"{row['peak_spread']['mean']:.0f} at step {row['peak_spread_step']['mean']:.0f} | "
+            f"containment {row['time_to_containment']['mean']:.1f} steps | "
+            f"reduction {row['relative_reduction_vs_baseline'] * 100:.0f}%"
+        )
+
+    print("\n=== false-positive cost ===")
+    costs = []
+    for strategy in STRATEGY_ORDER[1:]:
+        cost = false_positive_cost(posts, detections, results["baseline"], results[strategy], n_runs)
+        costs.append(
+            {
+                "label": strategy,
+                "real_reach_lost_mean": cost["real_reach_lost"]["mean"],
+                "fp_count": cost["fp_count"],
+            }
+        )
+        print(
+            f"{strategy:>11}: {cost['fp_count']} real posts flagged, "
+            f"{cost['real_reach_lost']['mean']:.1f} users of real-news reach lost per run, "
+            f"{cost['uncertain_count']} uncertain detections"
+        )
+
+    curves = []
+    for strategy in STRATEGY_ORDER:
+        curves.append(
+            {
+                "label": strategy,
+                "series": [
+                    result.newly_reached_by_step
+                    for post in posts
+                    if post.true_label == "fake"
+                    for result in results[strategy][post.id]
+                ],
+            }
+        )
+    plot_reach_curves(
+        curves,
+        config.OUTPUT_DIR / "strategy_comparison.png",
+        "Fake posts: spread over time per strategy (mean ± std)",
+    )
+    plot_fp_cost_bar(costs, config.OUTPUT_DIR / "fp_cost_bar.png")
+
+    payload = {
+        "meta": {"detector": args.detector, "n_runs": n_runs, "k": k},
+        "summary": table,
+        "fp_cost": costs,
+    }
+    with open(config.OUTPUT_DIR / "metrics.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    print(f"\ncharts and metrics saved to {config.OUTPUT_DIR}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="verifacto",
@@ -197,6 +318,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the real detector over the corpus and cache verdicts (once, ~1h)",
     )
     sub_precompute.set_defaults(func=cmd_precompute)
+
+    sub_targeted = subparsers.add_parser(
+        "targeted", help="top-k targeted containment, full evaluation"
+    )
+    sub_targeted.add_argument(
+        "--detector", choices=["stub", "replay", "real"], default="stub",
+        help="verdict source (default: deterministic stub)",
+    )
+    sub_targeted.add_argument("--runs", type=int, default=config.N_RUNS)
+    sub_targeted.add_argument("--k", type=int, default=config.K_BUDGET)
+    sub_targeted.add_argument(
+        "--allow-live", action="store_true",
+        help="allow live real-detector calls (slow, non-deterministic)",
+    )
+    sub_targeted.set_defaults(func=cmd_targeted)
 
     return parser
 

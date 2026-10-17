@@ -8,6 +8,7 @@ whole suite is deterministic.
 import pytest
 
 from verifacto.data.posts import generate_posts
+from verifacto.detector.stub import StubDetector
 from verifacto.network.graph_builder import build_language_graph
 
 
@@ -19,3 +20,8 @@ def graph():
 @pytest.fixture(scope="session")
 def posts(graph):
     return generate_posts(graph)
+
+
+@pytest.fixture(scope="session")
+def stub(posts):
+    return StubDetector(posts)

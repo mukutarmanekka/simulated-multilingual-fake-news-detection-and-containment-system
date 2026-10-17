@@ -97,6 +97,12 @@ def cmd_baseline(args) -> None:
     print(f"plot saved to {config.OUTPUT_DIR / 'baseline_reach.png'}")
 
 
+def cmd_precompute(args) -> None:
+    from .detector import precompute
+
+    raise SystemExit(precompute.main())
+
+
 def cmd_blanket(args) -> None:
     G = _load_or_build_graph()
     posts = _load_or_generate_posts(G)
@@ -185,6 +191,12 @@ def build_parser() -> argparse.ArgumentParser:
         "blanket", help="detector + blanket halving of flagged fakes"
     )
     sub_blanket.set_defaults(func=cmd_blanket)
+
+    sub_precompute = subparsers.add_parser(
+        "precompute",
+        help="run the real detector over the corpus and cache verdicts (once, ~1h)",
+    )
+    sub_precompute.set_defaults(func=cmd_precompute)
 
     return parser
 

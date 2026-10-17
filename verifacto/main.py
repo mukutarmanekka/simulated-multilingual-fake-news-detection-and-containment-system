@@ -293,6 +293,160 @@ def cmd_targeted(args) -> None:
     print(f"\ncharts and metrics saved to {config.OUTPUT_DIR}")
 
 
+def _run_strategy(G, posts, detections, strategy, n_runs, k, selected):
+    """Run one strategy over all posts; returns {post_id: [PostRunResult]}."""
+    results_by_post = {}
+    for post in posts:
+        p_maps = build_strategy_p_maps(
+            G, detections[post.id], strategy, n_runs, k=k, selected=selected
+        )
+        results_by_post[post.id] = run_post_experiment(
+            G, post, p_maps, n_runs, strategy
+        )
+    return results_by_post
+
+
+def cmd_compare(args) -> None:
+    G = _load_or_build_graph()
+    posts = _load_or_generate_posts(G)
+    detector = _build_detector(args, posts)
+    detections = run_detection(detector, posts)
+    n_runs = args.runs
+    budgets = args.budgets
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f"compare: detector={args.detector}, runs={n_runs}, budgets={budgets}")
+
+    centralities = precompute_centralities(G)
+
+    # baseline and blanket are budget-independent: compute once
+    print("running baseline and blanket ...")
+    shared = {}
+    for strategy in ("baseline", "blanket"):
+        shared[strategy] = _run_strategy(
+            G, posts, detections, strategy, n_runs, k=config.K_BUDGET, selected=None
+        )
+
+    # greedy selects per budget on its own seed space (disjoint from the
+    # evaluation draws it will be scored on)
+    greedy_selected = {}
+    for k in budgets:
+        pool = top_k_from_scores(centralities["betweenness"], args.greedy_pool)
+        print(
+            f"greedy selection for k={k} "
+            f"(pool {len(pool)}, {args.greedy_runs} selection runs) ..."
+        )
+        greedy_selected[k] = greedy_select(
+            G, posts, detections, k, args.greedy_runs, pool
+        )
+
+    table_rows = []
+    charts_by_budget = {}
+    for k in budgets:
+        results = dict(shared)
+        selected_by_strategy = {
+            method: top_k_from_scores(centralities[method], k)
+            for method in ("degree", "betweenness", "pagerank")
+        }
+        selected_by_strategy["greedy"] = greedy_selected[k]
+        for strategy in ("random", "degree", "betweenness", "pagerank", "greedy"):
+            results[strategy] = _run_strategy(
+                G,
+                posts,
+                detections,
+                strategy,
+                n_runs,
+                k=k,
+                selected=selected_by_strategy.get(strategy),
+            )
+
+        users_throttled = {"baseline": 0, "blanket": 0}
+        for strategy in ("random", "degree", "betweenness", "pagerank"):
+            users_throttled[strategy] = k
+        users_throttled["greedy"] = len(greedy_selected[k])
+
+        table = build_summary_table(
+            G, posts, detections, results, n_runs, users_throttled
+        )
+        for strategy in (
+            "baseline",
+            "blanket",
+            "random",
+            "degree",
+            "betweenness",
+            "pagerank",
+            "greedy",
+        ):
+            row = table[strategy]
+            if strategy == "baseline":
+                cost = {"real_reach_lost": {"mean": 0.0, "std": 0.0}}
+            else:
+                cost = false_positive_cost(
+                    posts, detections, results["baseline"], results[strategy], n_runs
+                )
+            table_rows.append(
+                {
+                    "budget": k,
+                    "strategy": strategy,
+                    "fake_reach_mean": row["final_fraction_reached"]["mean"],
+                    "fake_reach_std": row["final_fraction_reached"]["std"],
+                    "real_reach_lost_mean": cost["real_reach_lost"]["mean"],
+                    "real_reach_lost_std": cost["real_reach_lost"]["std"],
+                    "posts_acted_on": row["interventions"]["posts_acted_on"],
+                    "users_throttled": row["interventions"]["users_throttled"],
+                }
+            )
+
+        charts_by_budget[k] = [
+            {
+                "label": strategy,
+                "series": [
+                    result.newly_reached_by_step
+                    for post in posts
+                    if post.true_label == "fake"
+                    for result in results[strategy][post.id]
+                ],
+            }
+            for strategy in (
+                "baseline",
+                "blanket",
+                "random",
+                "degree",
+                "betweenness",
+                "pagerank",
+                "greedy",
+            )
+        ]
+
+    print("\n=== unified comparison (mean +/- std over runs) ===")
+    print(
+        f"{'budget':>6}  {'strategy':>11}  {'fake reach':>20}  "
+        f"{'real-news reach lost':>26}  {'posts':>5}  {'users':>5}"
+    )
+    for row in table_rows:
+        print(
+            f"k={row['budget']:<5}  {row['strategy']:>11}  "
+            f"{row['fake_reach_mean']:.3f} +/- {row['fake_reach_std']:<7.3f}  "
+            f"{row['real_reach_lost_mean']:>10.1f} +/- {row['real_reach_lost_std']:<7.1f}  "
+            f"{row['posts_acted_on']:>5}  {row['users_throttled']:>5}"
+        )
+
+    for k, curves in charts_by_budget.items():
+        plot_reach_curves(
+            curves,
+            config.OUTPUT_DIR / f"strategy_comparison_k{k}.png",
+            f"Fake posts per strategy at k={k} (mean ± std)",
+        )
+
+    payload = {
+        "meta": {"detector": args.detector, "n_runs": n_runs, "budgets": budgets},
+        "rows": table_rows,
+    }
+    with open(config.OUTPUT_DIR / "compare_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    print(f"\ncharts and table saved to {config.OUTPUT_DIR}")
+
+
 def cmd_bridges(args) -> None:
     G = _load_or_build_graph()
     bridges = detect_bridges(G)
@@ -433,6 +587,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow live real-detector calls (slow, non-deterministic)",
     )
     sub_targeted.set_defaults(func=cmd_targeted)
+
+    sub_compare = subparsers.add_parser(
+        "compare",
+        help="unified comparison of all strategies at k=10 and k=25",
+    )
+    sub_compare.add_argument(
+        "--detector", choices=["stub", "replay", "real"], default="stub"
+    )
+    sub_compare.add_argument("--runs", type=int, default=config.N_RUNS)
+    sub_compare.add_argument("--budgets", type=int, nargs="+", default=[10, 25])
+    sub_compare.add_argument("--greedy-pool", type=int, default=60)
+    sub_compare.add_argument("--greedy-runs", type=int, default=5)
+    sub_compare.add_argument("--allow-live", action="store_true")
+    sub_compare.set_defaults(func=cmd_compare)
 
     sub_bridges = subparsers.add_parser("bridges", help="detect cross-language bridge users")
     sub_bridges.set_defaults(func=cmd_bridges)

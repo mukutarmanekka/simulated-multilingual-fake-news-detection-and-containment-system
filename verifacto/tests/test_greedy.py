@@ -2,9 +2,11 @@
 
 import networkx as nx
 
+from verifacto import config
 from verifacto.containment.greedy import _flagged_posts, greedy_select
 from verifacto.data.posts import Post
 from verifacto.detector.base import DetectionResult
+from verifacto.simulation.cascade import build_draw_table
 
 
 def _chain_graph(n):
@@ -51,3 +53,15 @@ def test_flagged_posts_only():
     detections = {0: _detection(True), 1: _detection(False), 2: _detection(False)}
     flagged = _flagged_posts(posts, detections)
     assert [post.id for post in flagged] == [0]
+
+
+def test_greedy_draws_are_disjoint_from_evaluation_draws():
+    # the greedy's selection draws must come from its own seed space, so
+    # selecting and scoring never share randomness
+    G = _chain_graph(6)
+    for post_id in range(3):
+        for run in range(3):
+            selection_draws = build_draw_table(G, config.greedy_seed(post_id, run))
+            evaluation_draws = build_draw_table(G, config.cascade_seed(post_id, run))
+            for edge in G.edges():
+                assert selection_draws[edge] != evaluation_draws[edge]

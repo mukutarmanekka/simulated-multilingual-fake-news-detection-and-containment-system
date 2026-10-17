@@ -33,6 +33,20 @@ def cascade_seed(post_id: int, run: int) -> int:
     return int(state) % (2**32)
 
 
+# salt that puts the greedy's selection draws in a disjoint seed space
+# from the evaluation draws, so the greedy never optimizes on the exact
+# randomness it is later scored on
+GREEDY_SEED_SALT = 99991
+
+
+def greedy_seed(post_id: int, run: int) -> int:
+    """Selection-space seed for the greedy: disjoint from cascade_seed."""
+    state = np.random.SeedSequence(
+        [SEED_MASTER, post_id, run, GREEDY_SEED_SALT]
+    ).generate_state(1)[0]
+    return int(state) % (2**32)
+
+
 # ── Network ──────────────────────────────────────────────────────────
 
 LANGUAGES = ["en", "hi", "fr"]

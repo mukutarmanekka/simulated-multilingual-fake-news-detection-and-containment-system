@@ -12,12 +12,13 @@ flagged posts are truly fake. The false-positive cost of the resulting
 selection is measured afterwards by the evaluation layer.
 
 The objective is exact, not Monte Carlo: every candidate is evaluated on
-the SAME precomputed per-(post, run) draw tables that the final
-experiment uses (common random numbers), so the greedy minimizes the
-exact total-reached sum the comparison chart reports.
+precomputed per-(post, run) draw tables with common random numbers. Those
+draws come from the greedy's OWN seed space (greedy_seed), disjoint from
+the evaluation cascade seeds — selecting on the evaluation draws would
+overfit the selection to the exact randomness it is scored on.
 """
 
-from ..config import cascade_seed
+from ..config import greedy_seed
 from ..simulation.cascade import build_draw_table, run_ic_cascade
 from ..simulation.intervention import build_prob_map
 
@@ -50,7 +51,7 @@ def greedy_select(G, posts, detections, k, n_runs, candidates):
     for post in flagged_posts:
         draws_by_run = {}
         for run in range(n_runs):
-            seed = cascade_seed(post.id, run)
+            seed = greedy_seed(post.id, run)
             draws_by_run[run] = build_draw_table(G, seed)
         draw_tables[post.id] = draws_by_run
 

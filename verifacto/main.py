@@ -231,12 +231,12 @@ def cmd_targeted(args) -> None:
     }
     table = build_summary_table(G, posts, detections, results, n_runs, users_throttled)
 
-    print("\n=== strategy comparison (fake posts, mean ± std over runs) ===")
+    print("\n=== strategy comparison (fake posts, mean +/- std over runs) ===")
     for strategy in STRATEGY_ORDER:
         row = table[strategy]
         print(
             f"{strategy:>11}: final fraction {row['final_fraction_reached']['mean']:.3f} "
-            f"± {row['final_fraction_reached']['std']:.3f} | peak "
+            f"+/- {row['final_fraction_reached']['std']:.3f} | peak "
             f"{row['peak_spread']['mean']:.0f} at step {row['peak_spread_step']['mean']:.0f} | "
             f"containment {row['time_to_containment']['mean']:.1f} steps | "
             f"reduction {row['relative_reduction_vs_baseline'] * 100:.0f}%"

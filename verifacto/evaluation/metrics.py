@@ -35,8 +35,14 @@ def time_to_containment(series):
     return len(series) - 1
 
 
-def interventions_used(posts, detections, users_throttled):
-    """Count of interventions: posts acted on and users throttled."""
+def interventions_used(posts, detections, users_throttled, active=True):
+    """Count of interventions: posts acted on and users throttled.
+
+    The baseline strategy takes no action at all (active=False), even
+    though the detector may have flagged posts.
+    """
+    if not active:
+        return {"posts_acted_on": 0, "users_throttled": 0}
     posts_acted_on = 0
     for post in posts:
         if detections[post.id].is_fake is True:
@@ -134,7 +140,10 @@ def build_summary_table(G, posts, detections, results, n_runs, users_throttled):
             "time_to_containment": containment,
             "relative_reduction_vs_baseline": relative_reduction,
             "interventions": interventions_used(
-                posts, detections, users_throttled.get(strategy, 0)
+                posts,
+                detections,
+                users_throttled.get(strategy, 0),
+                active=(strategy != "baseline"),
             ),
         }
     return table

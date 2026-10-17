@@ -62,6 +62,13 @@ def test_interventions_used_counts_flagged_posts():
     assert used == {"posts_acted_on": 1, "users_throttled": 25}
 
 
+def test_interventions_used_baseline_takes_no_action():
+    posts = [_post(0, "fake")]
+    detections = {0: _fake()}
+    used = interventions_used(posts, detections, users_throttled=25, active=False)
+    assert used == {"posts_acted_on": 0, "users_throttled": 0}
+
+
 def test_false_positive_cost_only_real_posts():
     posts = [
         _post(0, "fake"),

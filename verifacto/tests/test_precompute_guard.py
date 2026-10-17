@@ -1,6 +1,11 @@
 """Phase 4: the degraded-verdict guard never caches pipeline errors."""
 
-from verifacto.detector.precompute import _claims_are_degraded
+from verifacto.detector.base import DetectionResult
+from verifacto.detector.precompute import (
+    _cache_entry,
+    _claims_are_degraded,
+    _providers_meta,
+)
 
 
 def _pipeline_error_claim():
@@ -44,3 +49,29 @@ def test_mixed_claims_are_not_degraded():
 def test_no_claims_is_not_degraded():
     # a post with no checkable claims is a genuine outcome
     assert _claims_are_degraded([]) is False
+
+
+def test_cache_entry_records_provider_and_model():
+    result = DetectionResult(
+        is_fake=True, confidence=0.8, verdict_summary="REFUTED", provider="ollama"
+    )
+    entry = _cache_entry(result, [], "ollama", "deepseek-r1:8b")
+    assert entry["provider"] == "ollama"
+    assert entry["model"] == "deepseek-r1:8b"
+    assert entry["mapped"]["is_fake"] is True
+
+
+def test_providers_meta_summarizes_per_post():
+    cache = {
+        "verdicts": {
+            "0": {"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+            "1": {"provider": "ollama", "model": "deepseek-r1:8b"},
+            "2": {"provider": "ollama", "model": "deepseek-r1:8b"},
+        }
+    }
+    meta = _providers_meta(cache)
+    assert meta["per_post"]["0"] == {"provider": "gemini", "model": "gemini-2.5-flash-lite"}
+    assert meta["per_post"]["2"] == {"provider": "ollama", "model": "deepseek-r1:8b"}
+    used = {(item["provider"], item["model"]): item["posts"] for item in meta["used"]}
+    assert used[("gemini", "gemini-2.5-flash-lite")] == 1
+    assert used[("ollama", "deepseek-r1:8b")] == 2

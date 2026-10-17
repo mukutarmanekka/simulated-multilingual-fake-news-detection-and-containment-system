@@ -63,11 +63,12 @@ def _claims_are_degraded(claims):
     return True
 
 
-def _cache_entry(result, claims):
+def _cache_entry(result, claims, provider, model):
     return {
         "status": "completed",
         "total_claims": len(claims),
-        "provider": result.provider,
+        "provider": provider,
+        "model": model,
         "cached_at": datetime.now(timezone.utc).isoformat(),
         "results": [
             {
@@ -84,6 +85,27 @@ def _cache_entry(result, claims):
             "confidence": result.confidence,
             "verdict_summary": result.verdict_summary,
         },
+    }
+
+
+def _providers_meta(cache):
+    """Per-post provider/model records plus a summary over the cache."""
+    per_post = {}
+    used = {}
+    for post_id_str, entry in cache["verdicts"].items():
+        provider = entry.get("provider", "unknown")
+        model = entry.get("model")
+        per_post[post_id_str] = {"provider": provider, "model": model}
+        key = (provider, model)
+        if key not in used:
+            used[key] = []
+        used[key].append(post_id_str)
+    return {
+        "per_post": per_post,
+        "used": [
+            {"provider": provider, "model": model, "posts": len(ids)}
+            for (provider, model), ids in used.items()
+        ],
     }
 
 
@@ -117,15 +139,16 @@ async def _run_all(adapter, posts, cache, cache_path, pacing):
             continue
         consecutive_failures = 0
 
-        result = map_job_results(
-            claims, CONFIDENCE_THRESHOLD, provider=adapter._llm_service.provider
-        )
-        cache["verdicts"][str(post.id)] = _cache_entry(result, claims)
+        provider = adapter.active_provider()
+        model = adapter.active_model()
+        result = map_job_results(claims, CONFIDENCE_THRESHOLD, provider=provider)
+        cache["verdicts"][str(post.id)] = _cache_entry(result, claims, provider, model)
         cache["meta"] = {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "adapter": "real",
             "threshold": CONFIDENCE_THRESHOLD,
             "pacing_seconds": pacing,
+            "providers": _providers_meta(cache),
         }
         write_cache_atomic(cache_path, cache)
         print(

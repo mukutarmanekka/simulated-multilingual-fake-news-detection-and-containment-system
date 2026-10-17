@@ -31,13 +31,32 @@ class RealDetectorAdapter:
         from dotenv import load_dotenv
 
         load_dotenv(REPO_ROOT / ".env")
+        from src.config import settings
         from src.models.enums import InputType
         from src.pipeline.orchestrator import PipelineOrchestrator
         from src.services.llm_service import llm_service
 
+        self._settings = settings
         self._orchestrator = PipelineOrchestrator
         self._input_type = InputType
         self._llm_service = llm_service
+
+    def active_provider(self):
+        """The LLM provider name the pipeline is currently using."""
+        self._import_pipeline()
+        return self._llm_service.provider
+
+    def active_model(self):
+        """The model name behind the active provider (for cache records)."""
+        self._import_pipeline()
+        provider = self._llm_service.provider
+        if provider == "gemini":
+            return self._settings.gemini_model
+        if provider == "openai":
+            return self._settings.openai_model
+        if provider == "ollama":
+            return self._settings.ollama_model
+        return provider
 
     async def run_job(self, text, language, post_id):
         """Run the pipeline and return the raw job response (async)."""

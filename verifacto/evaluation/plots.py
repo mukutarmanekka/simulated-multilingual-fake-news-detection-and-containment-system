@@ -119,6 +119,37 @@ def plot_reach_curves(
     plt.close(fig)
 
 
+def plot_sweep_lines(x_values, x_label, series_by_strategy, out_path, title):
+    """Sensitivity sweep: mean metric per strategy across swept values.
+
+    series_by_strategy is a dict label -> {"mean": [..], "std": [..]}
+    with one entry per x value, in x_values order. Colors come from the
+    fixed categorical slots, so a strategy keeps its color across charts.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    _style_axes(ax, title, x_label, "mean final fraction reached (fake posts)")
+    for index, (label, series) in enumerate(series_by_strategy.items()):
+        color = SERIES_COLORS[index % len(SERIES_COLORS)]
+        means = series["mean"]
+        stds = series.get("std", [0.0] * len(means))
+        ax.errorbar(
+            x_values,
+            means,
+            yerr=stds,
+            color=color,
+            linewidth=2,
+            marker="o",
+            markersize=5,
+            capsize=3,
+            label=label,
+        )
+    if len(series_by_strategy) > 1:
+        ax.legend(frameon=False, labelcolor=CHROME["ink"], fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, facecolor=CHROME["surface"])
+    plt.close(fig)
+
+
 def plot_fp_cost_bar(costs, out_path):
     """False-positive cost per strategy: two stacked panels, one figure.
 

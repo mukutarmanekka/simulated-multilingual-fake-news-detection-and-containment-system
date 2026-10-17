@@ -24,7 +24,7 @@ from .detector.replay import ReplayDetector
 from .detector.real_adapter import RealDetectorAdapter
 from .detector.stub import StubDetector
 from .evaluation.metrics import build_summary_table, false_positive_cost
-from .evaluation.plots import plot_fp_cost_bar, plot_reach_curves
+from .evaluation.plots import plot_fp_cost_bar, plot_reach_curves, plot_sweep_lines
 from .network.graph_builder import (
     build_language_graph,
     load_graph,
@@ -36,6 +36,9 @@ from .simulation.experiment import build_strategy_p_maps, run_post_experiment
 from .simulation.intervention import run_detection, select_top_k
 
 STRATEGY_ORDER = ["baseline", "blanket", "random", "degree", "betweenness", "pagerank"]
+
+# strategies shared by the compare and sweep commands (greedy is optional)
+ALL_STRATEGIES = ["baseline", "blanket", "random", "degree", "betweenness", "pagerank"]
 
 
 def _load_or_build_graph():
@@ -306,6 +309,81 @@ def _run_strategy(G, posts, detections, strategy, n_runs, k, selected):
     return results_by_post
 
 
+def _run_budget_block(
+    G, posts, detections, centralities, n_runs, k, shared,
+    greedy_pool, greedy_runs, with_greedy,
+):
+    """Run every strategy at budget k; returns (table_rows, chart_curves)."""
+    strategies = list(ALL_STRATEGIES)
+    results = dict(shared)
+    selected_by_strategy = {
+        method: top_k_from_scores(centralities[method], k)
+        for method in ("degree", "betweenness", "pagerank")
+    }
+    if with_greedy:
+        pool = top_k_from_scores(centralities["betweenness"], greedy_pool)
+        print(
+            f"greedy selection for k={k} "
+            f"(pool {len(pool)}, {greedy_runs} selection runs) ..."
+        )
+        selected_by_strategy["greedy"] = greedy_select(
+            G, posts, detections, k, greedy_runs, pool
+        )
+        strategies.append("greedy")
+
+    for strategy in ("random", "degree", "betweenness", "pagerank"):
+        results[strategy] = _run_strategy(
+            G, posts, detections, strategy, n_runs, k=k,
+            selected=selected_by_strategy.get(strategy),
+        )
+    if "greedy" in selected_by_strategy:
+        results["greedy"] = _run_strategy(
+            G, posts, detections, "greedy", n_runs, k=k,
+            selected=selected_by_strategy["greedy"],
+        )
+
+    users_throttled = {"baseline": 0, "blanket": 0}
+    for strategy in ("random", "degree", "betweenness", "pagerank"):
+        users_throttled[strategy] = k
+    if with_greedy:
+        users_throttled["greedy"] = len(selected_by_strategy["greedy"])
+
+    table = build_summary_table(G, posts, detections, results, n_runs, users_throttled)
+    rows = []
+    for strategy in strategies:
+        row = table[strategy]
+        if strategy == "baseline":
+            cost = {"real_reach_lost": {"mean": 0.0, "std": 0.0}}
+        else:
+            cost = false_positive_cost(
+                posts, detections, results["baseline"], results[strategy], n_runs
+            )
+        rows.append(
+            {
+                "strategy": strategy,
+                "fake_reach_mean": row["final_fraction_reached"]["mean"],
+                "fake_reach_std": row["final_fraction_reached"]["std"],
+                "real_reach_lost_mean": cost["real_reach_lost"]["mean"],
+                "real_reach_lost_std": cost["real_reach_lost"]["std"],
+                "posts_acted_on": row["interventions"]["posts_acted_on"],
+                "users_throttled": row["interventions"]["users_throttled"],
+            }
+        )
+    curves = [
+        {
+            "label": strategy,
+            "series": [
+                result.newly_reached_by_step
+                for post in posts
+                if post.true_label == "fake"
+                for result in results[strategy][post.id]
+            ],
+        }
+        for strategy in strategies
+    ]
+    return rows, curves
+
+
 def cmd_compare(args) -> None:
     G = _load_or_build_graph()
     posts = _load_or_generate_posts(G)
@@ -327,96 +405,17 @@ def cmd_compare(args) -> None:
             G, posts, detections, strategy, n_runs, k=config.K_BUDGET, selected=None
         )
 
-    # greedy selects per budget on its own seed space (disjoint from the
-    # evaluation draws it will be scored on)
-    greedy_selected = {}
-    for k in budgets:
-        pool = top_k_from_scores(centralities["betweenness"], args.greedy_pool)
-        print(
-            f"greedy selection for k={k} "
-            f"(pool {len(pool)}, {args.greedy_runs} selection runs) ..."
-        )
-        greedy_selected[k] = greedy_select(
-            G, posts, detections, k, args.greedy_runs, pool
-        )
-
     table_rows = []
     charts_by_budget = {}
     for k in budgets:
-        results = dict(shared)
-        selected_by_strategy = {
-            method: top_k_from_scores(centralities[method], k)
-            for method in ("degree", "betweenness", "pagerank")
-        }
-        selected_by_strategy["greedy"] = greedy_selected[k]
-        for strategy in ("random", "degree", "betweenness", "pagerank", "greedy"):
-            results[strategy] = _run_strategy(
-                G,
-                posts,
-                detections,
-                strategy,
-                n_runs,
-                k=k,
-                selected=selected_by_strategy.get(strategy),
-            )
-
-        users_throttled = {"baseline": 0, "blanket": 0}
-        for strategy in ("random", "degree", "betweenness", "pagerank"):
-            users_throttled[strategy] = k
-        users_throttled["greedy"] = len(greedy_selected[k])
-
-        table = build_summary_table(
-            G, posts, detections, results, n_runs, users_throttled
+        rows, curves = _run_budget_block(
+            G, posts, detections, centralities, n_runs, k, shared,
+            args.greedy_pool, args.greedy_runs, with_greedy=True,
         )
-        for strategy in (
-            "baseline",
-            "blanket",
-            "random",
-            "degree",
-            "betweenness",
-            "pagerank",
-            "greedy",
-        ):
-            row = table[strategy]
-            if strategy == "baseline":
-                cost = {"real_reach_lost": {"mean": 0.0, "std": 0.0}}
-            else:
-                cost = false_positive_cost(
-                    posts, detections, results["baseline"], results[strategy], n_runs
-                )
-            table_rows.append(
-                {
-                    "budget": k,
-                    "strategy": strategy,
-                    "fake_reach_mean": row["final_fraction_reached"]["mean"],
-                    "fake_reach_std": row["final_fraction_reached"]["std"],
-                    "real_reach_lost_mean": cost["real_reach_lost"]["mean"],
-                    "real_reach_lost_std": cost["real_reach_lost"]["std"],
-                    "posts_acted_on": row["interventions"]["posts_acted_on"],
-                    "users_throttled": row["interventions"]["users_throttled"],
-                }
-            )
-
-        charts_by_budget[k] = [
-            {
-                "label": strategy,
-                "series": [
-                    result.newly_reached_by_step
-                    for post in posts
-                    if post.true_label == "fake"
-                    for result in results[strategy][post.id]
-                ],
-            }
-            for strategy in (
-                "baseline",
-                "blanket",
-                "random",
-                "degree",
-                "betweenness",
-                "pagerank",
-                "greedy",
-            )
-        ]
+        for row in rows:
+            row["budget"] = k
+        table_rows.extend(rows)
+        charts_by_budget[k] = curves
 
     print("\n=== unified comparison (mean +/- std over runs) ===")
     print(
@@ -445,6 +444,101 @@ def cmd_compare(args) -> None:
     with open(config.OUTPUT_DIR / "compare_metrics.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     print(f"\ncharts and table saved to {config.OUTPUT_DIR}")
+
+
+def cmd_sweep(args) -> None:
+    n_runs = args.runs
+    k = args.k
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    base_graph = _load_or_build_graph()
+    base_posts = _load_or_generate_posts(base_graph)
+    # centralities depend on topology only, which every sweep shares
+    centralities = precompute_centralities(base_graph)
+
+    sweep_rows = []
+    rankings = []
+    curves_by_value = []
+
+    for value in args.values:
+        if args.mode == "p":
+            p_spread = float(value)
+            # same wiring seed -> identical topology, only edge p changes
+            G = build_language_graph(p_spread=p_spread)
+            posts = generate_posts(G)
+            detector = StubDetector(posts)
+            budget = k
+        elif args.mode == "k":
+            G = base_graph
+            posts = base_posts
+            detector = StubDetector(posts)
+            budget = int(value)
+        elif args.mode == "accuracy":
+            G = base_graph
+            posts = base_posts
+            detector = StubDetector(posts, sensitivity=float(value))
+            budget = k
+        else:
+            raise ValueError(f"unknown sweep mode: {args.mode}")
+
+        detections = run_detection(detector, posts)
+        print(f"sweep {args.mode}={value} ...")
+        shared = {}
+        for strategy in ("baseline", "blanket"):
+            shared[strategy] = _run_strategy(
+                G, posts, detections, strategy, n_runs,
+                k=config.K_BUDGET, selected=None,
+            )
+        rows, curves = _run_budget_block(
+            G, posts, detections, centralities, n_runs, budget, shared,
+            args.greedy_pool, args.greedy_runs, args.with_greedy,
+        )
+        sorted_rows = sorted(rows, key=lambda row: row["fake_reach_mean"])
+        order = [row["strategy"] for row in sorted_rows]
+        rankings.append((value, order))
+        for row in rows:
+            row["sweep_value"] = value
+        sweep_rows.extend(rows)
+        curves_by_value.append((value, curves))
+
+    print(f"\n=== {args.mode} sweep: strategy ranking by mean fake reach (lower is better) ===")
+    for value, order in rankings:
+        print(f"{args.mode}={value}: " + " < ".join(order))
+    first_order = rankings[0][1]
+    stable = all(order == first_order for _, order in rankings[1:])
+    print(f"ranking stable across all values: {stable}")
+
+    # one line per strategy across the swept values, fixed color slots
+    x_values = [float(value) for value in args.values]
+    if args.mode == "k":
+        x_values = [int(value) for value in args.values]
+    series_by_strategy = {}
+    for strategy in ALL_STRATEGIES + (["greedy"] if args.with_greedy else []):
+        means = []
+        stds = []
+        for row in sweep_rows:
+            if row["strategy"] != strategy:
+                continue
+            means.append(row["fake_reach_mean"])
+            stds.append(row["fake_reach_std"])
+        series_by_strategy[strategy] = {"mean": means, "std": stds}
+    x_label = {"p": "spread probability p", "k": "budget k", "accuracy": "stub sensitivity"}[args.mode]
+    plot_sweep_lines(
+        x_values,
+        x_label,
+        series_by_strategy,
+        config.OUTPUT_DIR / f"sweep_{args.mode}.png",
+        f"Sensitivity sweep: {x_label}",
+    )
+
+    payload = {
+        "meta": {"mode": args.mode, "n_runs": n_runs, "k": k, "values": args.values},
+        "rankings": [{"value": value, "order": order} for value, order in rankings],
+        "rows": sweep_rows,
+    }
+    with open(config.OUTPUT_DIR / f"sweep_{args.mode}.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    print(f"\nplot and table saved to {config.OUTPUT_DIR}")
 
 
 def cmd_bridges(args) -> None:
@@ -601,6 +695,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub_compare.add_argument("--greedy-runs", type=int, default=5)
     sub_compare.add_argument("--allow-live", action="store_true")
     sub_compare.set_defaults(func=cmd_compare)
+
+    sub_sweep = subparsers.add_parser(
+        "sweep", help="sensitivity sweeps: p (spread), k (budget), accuracy (stub)"
+    )
+    sub_sweep.add_argument("mode", choices=["p", "k", "accuracy"])
+    sub_sweep.add_argument("--values", nargs="+", required=True)
+    sub_sweep.add_argument("--runs", type=int, default=config.N_RUNS)
+    sub_sweep.add_argument(
+        "--k", type=int, default=config.K_BUDGET,
+        help="budget used by the p and accuracy sweeps",
+    )
+    sub_sweep.add_argument("--with-greedy", action="store_true")
+    sub_sweep.add_argument("--greedy-pool", type=int, default=60)
+    sub_sweep.add_argument("--greedy-runs", type=int, default=5)
+    sub_sweep.set_defaults(func=cmd_sweep)
 
     sub_bridges = subparsers.add_parser("bridges", help="detect cross-language bridge users")
     sub_bridges.set_defaults(func=cmd_bridges)

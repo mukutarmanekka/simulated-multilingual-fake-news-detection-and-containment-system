@@ -72,6 +72,18 @@ def test_bridges_span_languages():
         assert len(neighbor_languages) >= 2
 
 
+def test_p_spread_does_not_change_topology():
+    # the p sweep relies on this: varying the spread probability keeps the
+    # wiring (and therefore the draw tables) identical, only edge p changes
+    low = build_language_graph(p_spread=0.05)
+    high = build_language_graph(p_spread=0.15)
+    assert set(low.nodes) == set(high.nodes)
+    assert set(low.edges) == set(high.edges)
+    for u, v in low.edges:
+        assert low[u][v]["p"] == 0.05
+        assert high[u][v]["p"] == 0.15
+
+
 def test_deterministic():
     first = build_language_graph()
     second = build_language_graph()

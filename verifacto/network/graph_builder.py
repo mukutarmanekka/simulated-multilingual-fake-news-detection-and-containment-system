@@ -24,7 +24,7 @@ from ..config import (
 )
 
 
-def _add_random_out_edges(G, source, candidates, count, rng):
+def _add_random_out_edges(G, source, candidates, count, rng, p_spread):
     """Add `count` outgoing edges from `source` to distinct random candidates.
 
     Skips self-loops and edges that already exist, so the final out-degree
@@ -36,12 +36,12 @@ def _add_random_out_edges(G, source, candidates, count, rng):
             continue
         if G.has_edge(source, int(target)):
             continue
-        G.add_edge(source, int(target), p=P_SPREAD)
+        G.add_edge(source, int(target), p=p_spread)
         added += 1
     return added
 
 
-def _add_hub_edges(G, block_nodes, hub_ids, hub_degree_target, rng):
+def _add_hub_edges(G, block_nodes, hub_ids, hub_degree_target, rng, p_spread):
     for hub in hub_ids:
         while G.out_degree(hub) < hub_degree_target:
             target = int(rng.choice(block_nodes))
@@ -49,13 +49,13 @@ def _add_hub_edges(G, block_nodes, hub_ids, hub_degree_target, rng):
                 continue
             if G.has_edge(hub, target):
                 continue
-            G.add_edge(hub, target, p=P_SPREAD)
+            G.add_edge(hub, target, p=p_spread)
 
 
-def _add_bridge_edges(G, block_nodes, bridge_ids, other_blocks, extra_per_block, rng):
+def _add_bridge_edges(G, block_nodes, bridge_ids, other_blocks, extra_per_block, rng, p_spread):
     for bridge in bridge_ids:
         for other_block in other_blocks:
-            _add_random_out_edges(G, bridge, other_block, extra_per_block, rng)
+            _add_random_out_edges(G, bridge, other_block, extra_per_block, rng, p_spread)
 
 
 def build_language_graph(
@@ -103,9 +103,9 @@ def build_language_graph(
         for bridge in bridge_ids:
             G.nodes[bridge]["is_bridge"] = True
 
-        _add_hub_edges(G, block_nodes, hub_ids, hub_degree_target, rng)
+        _add_hub_edges(G, block_nodes, hub_ids, hub_degree_target, rng, p_spread)
         _add_bridge_edges(
-            G, block_nodes, bridge_ids, other_blocks, bridge_extra_per_block, rng
+            G, block_nodes, bridge_ids, other_blocks, bridge_extra_per_block, rng, p_spread
         )
 
     return G

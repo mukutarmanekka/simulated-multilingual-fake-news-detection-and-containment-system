@@ -1,0 +1,7 @@
+# Generated artifacts (regenerate with `python -m verifacto.main <graph|posts|precompute>`)
+data/graph.gpickle
+data/posts.json
+data/detector_cache.json
+
+# Experiment outputs
+output/

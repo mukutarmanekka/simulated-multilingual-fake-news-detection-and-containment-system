@@ -15,7 +15,7 @@ PIPELINE_DIR = REPO_ROOT / "pipeline"
 DATA_DIR = REPO_ROOT / "verifacto" / "data"
 OUTPUT_DIR = REPO_ROOT / "verifacto" / "output"
 
-GRAPH_PATH = DATA_DIR / "graph.gpickle"
+GRAPH_PATH = DATA_DIR / "graph.graphml"
 POSTS_PATH = DATA_DIR / "posts.json"
 CACHE_PATH = DATA_DIR / "detector_cache.json"
 

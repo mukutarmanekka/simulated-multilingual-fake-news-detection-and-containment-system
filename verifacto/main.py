@@ -11,6 +11,21 @@ Subcommands are added phase by phase:
 
 import argparse
 
+from . import config
+from .network.graph_builder import (
+    build_language_graph,
+    print_graph_summary,
+    save_graph,
+)
+
+
+def cmd_graph(args) -> None:
+    G = build_language_graph()
+    print_graph_summary(G)
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    save_graph(G)
+    print(f"graph saved to {config.GRAPH_PATH}")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -18,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Simulated social network where fake news detections trigger containment actions.",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    sub_graph = subparsers.add_parser("graph", help="build and save the language-block network")
+    sub_graph.set_defaults(func=cmd_graph)
+
     return parser
 
 
@@ -26,6 +45,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
+    else:
+        args.func(args)
 
 
 if __name__ == "__main__":

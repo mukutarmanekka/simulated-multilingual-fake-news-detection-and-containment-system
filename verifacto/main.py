@@ -15,7 +15,10 @@ import json
 import numpy as np
 
 from . import config
+from .containment.bridges import detect_bridges, print_bridge_summary
+from .containment.greedy import greedy_select
 from .containment.heuristics import precompute_centralities, top_k_from_scores
+from .containment.priority import rank_flagged_posts
 from .data.posts import generate_posts, load_posts, print_posts_summary, save_posts
 from .detector.replay import ReplayDetector
 from .detector.real_adapter import RealDetectorAdapter
@@ -290,6 +293,103 @@ def cmd_targeted(args) -> None:
     print(f"\ncharts and metrics saved to {config.OUTPUT_DIR}")
 
 
+def cmd_bridges(args) -> None:
+    G = _load_or_build_graph()
+    bridges = detect_bridges(G)
+    print_bridge_summary(G, bridges)
+
+
+def cmd_priority(args) -> None:
+    G = _load_or_build_graph()
+    posts = _load_or_generate_posts(G)
+    detector = _build_detector(args, posts)
+    detections = run_detection(detector, posts)
+    ranked = rank_flagged_posts(G, posts, detections, eval_runs=args.runs)
+    print("=== flagged posts by expected harm (priority = confidence x expected reach) ===")
+    for post_id, priority, confidence, reach in ranked[:20]:
+        print(
+            f"  post {post_id:>2}: priority {priority:7.1f} "
+            f"(confidence {confidence:.2f} x expected reach {reach:6.1f})"
+        )
+    print(f"  ... {len(ranked)} flagged posts total")
+
+
+def cmd_greedy(args) -> None:
+    G = _load_or_build_graph()
+    posts = _load_or_generate_posts(G)
+    detector = _build_detector(args, posts)
+    detections = run_detection(detector, posts)
+    n_runs = args.runs
+    k = args.k
+
+    centralities = precompute_centralities(G)
+    pool = top_k_from_scores(centralities["betweenness"], args.pool)
+    print(f"greedy: k={k}, candidate pool={len(pool)} (top betweenness), runs={n_runs}")
+    selected = greedy_select(G, posts, detections, k, n_runs, pool)
+
+    # compare greedy against baseline and betweenness-k on the same draws
+    strategies = ["baseline", "betweenness", "greedy"]
+    selected_by_strategy = {
+        "betweenness": top_k_from_scores(centralities["betweenness"], k),
+        "greedy": selected,
+    }
+    results = {}
+    for strategy in strategies:
+        results[strategy] = {}
+        for post in posts:
+            p_maps = build_strategy_p_maps(
+                G,
+                detections[post.id],
+                strategy,
+                n_runs,
+                k=k,
+                selected=selected_by_strategy.get(strategy),
+            )
+            results[strategy][post.id] = run_post_experiment(
+                G, post, p_maps, n_runs, strategy
+            )
+
+    users_throttled = {
+        "baseline": 0,
+        "betweenness": k,
+        "greedy": len(selected),
+    }
+    table = build_summary_table(G, posts, detections, results, n_runs, users_throttled)
+    print("\n=== greedy vs betweenness vs baseline (fake posts) ===")
+    for strategy in strategies:
+        row = table[strategy]
+        print(
+            f"{strategy:>11}: final fraction {row['final_fraction_reached']['mean']:.3f} | "
+            f"reduction {row['relative_reduction_vs_baseline'] * 100:.0f}% | "
+            f"users throttled {row['interventions']['users_throttled']}"
+        )
+    for strategy in ("betweenness", "greedy"):
+        cost = false_positive_cost(posts, detections, results["baseline"], results[strategy], n_runs)
+        print(
+            f"{strategy:>11}: FP cost — {cost['fp_count']} real posts flagged, "
+            f"{cost['real_reach_lost']['mean']:.1f} users of real-news reach lost per run"
+        )
+
+    curves = [
+        {
+            "label": strategy,
+            "series": [
+                result.newly_reached_by_step
+                for post in posts
+                if post.true_label == "fake"
+                for result in results[strategy][post.id]
+            ],
+        }
+        for strategy in strategies
+    ]
+    plot_reach_curves(
+        curves,
+        config.OUTPUT_DIR / "greedy_comparison.png",
+        "Fake posts: greedy vs betweenness vs baseline (mean ± std)",
+    )
+    print(f"\nchart saved to {config.OUTPUT_DIR / 'greedy_comparison.png'}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="verifacto",
@@ -333,6 +433,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow live real-detector calls (slow, non-deterministic)",
     )
     sub_targeted.set_defaults(func=cmd_targeted)
+
+    sub_bridges = subparsers.add_parser("bridges", help="detect cross-language bridge users")
+    sub_bridges.set_defaults(func=cmd_bridges)
+
+    sub_priority = subparsers.add_parser(
+        "priority", help="rank flagged posts by confidence x expected reach"
+    )
+    sub_priority.add_argument(
+        "--detector", choices=["stub", "replay", "real"], default="stub"
+    )
+    sub_priority.add_argument("--runs", type=int, default=10)
+    sub_priority.set_defaults(func=cmd_priority)
+
+    sub_greedy = subparsers.add_parser(
+        "greedy", help="greedy top-k throttling (empirical heuristic)"
+    )
+    sub_greedy.add_argument(
+        "--detector", choices=["stub", "replay", "real"], default="stub"
+    )
+    sub_greedy.add_argument("--runs", type=int, default=5)
+    sub_greedy.add_argument("--k", type=int, default=10)
+    sub_greedy.add_argument("--pool", type=int, default=60)
+    sub_greedy.add_argument("--allow-live", action="store_true")
+    sub_greedy.set_defaults(func=cmd_greedy)
 
     return parser
 

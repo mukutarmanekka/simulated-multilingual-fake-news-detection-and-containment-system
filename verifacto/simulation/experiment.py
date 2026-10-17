@@ -12,7 +12,7 @@ from ..config import K_BUDGET, cascade_seed
 from .cascade import build_draw_table, run_ic_cascade
 from .intervention import blanket_factor, build_prob_map, select_top_k
 
-TARGETED_METHODS = ("random", "degree", "betweenness", "pagerank")
+TARGETED_METHODS = ("random", "degree", "betweenness", "pagerank", "greedy")
 
 
 @dataclass

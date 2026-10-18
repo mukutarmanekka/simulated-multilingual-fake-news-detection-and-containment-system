@@ -13,6 +13,25 @@ from ..config import CONFIDENCE_THRESHOLD, PIPELINE_DIR, REPO_ROOT
 from .base import ensure_real_provider, map_job_results
 
 
+def model_for_provider(provider, settings):
+    """Model name behind a provider, for cache attribution.
+
+    Pure function over a settings-like object (the pipeline's Settings),
+    so it can be unit-tested without importing the detector.
+    """
+    if provider == "gemini":
+        return settings.gemini_model
+    if provider == "openai":
+        return settings.openai_model
+    if provider == "ollama":
+        return settings.ollama_model
+    if provider == "deepseek":
+        return settings.deepseek_model
+    if provider == "openai-compatible":
+        return settings.openai_compatible_model
+    return provider
+
+
 class RealDetectorAdapter:
     def __init__(self, pipeline_dir=PIPELINE_DIR, pacing_seconds=0.0):
         self._pipeline_dir = pipeline_dir
@@ -49,14 +68,7 @@ class RealDetectorAdapter:
     def active_model(self):
         """The model name behind the active provider (for cache records)."""
         self._import_pipeline()
-        provider = self._llm_service.provider
-        if provider == "gemini":
-            return self._settings.gemini_model
-        if provider == "openai":
-            return self._settings.openai_model
-        if provider == "ollama":
-            return self._settings.ollama_model
-        return provider
+        return model_for_provider(self._llm_service.provider, self._settings)
 
     async def run_job(self, text, language, post_id):
         """Run the pipeline and return the raw job response (async)."""

@@ -1,4 +1,4 @@
-"""LLM Service — Google Gemini / OpenAI wrapper.
+"""LLM Service — Google Gemini and OpenAI-compatible API wrapper.
 
 Provides structured JSON generation via LLMs with:
 - Async-safe execution (sync Gemini client wrapped in asyncio.to_thread)
@@ -28,12 +28,14 @@ logger = structlog.get_logger()
 
 
 class LLMService:
-    """Unified LLM interface supporting Gemini and OpenAI."""
+    """Unified LLM interface supporting Gemini and OpenAI-compatible APIs."""
 
     def __init__(self):
         self._gemini_client = None
         self._openai_client = None
-        self.provider = settings.llm_provider
+        self._openai_compatible_client = None
+        self._deepseek_client = None
+        self.provider = settings.llm_provider.strip().lower().replace("_", "-")
         self._init_client()
 
     def _init_client(self):
@@ -58,6 +60,9 @@ class LLMService:
                 if settings.gemini_api_key:
                     logger.info("llm.auto_switching", to="gemini")
                     self.provider = "gemini"
+                elif settings.deepseek_api_key:
+                    logger.info("llm.auto_switching", to="deepseek")
+                    self.provider = "deepseek"
                 elif settings.openai_api_key:
                     logger.info("llm.auto_switching", to="openai")
                     self.provider = "openai"
@@ -73,7 +78,32 @@ class LLMService:
             logger.info("llm.init", provider="mock", msg="Using mock LLM — no external calls")
             return
 
-        if self.provider == "gemini" and settings.gemini_api_key:
+        if self.provider == "deepseek" and settings.deepseek_api_key:
+            try:
+                from openai import AsyncOpenAI
+                self._deepseek_client = AsyncOpenAI(
+                    api_key=settings.deepseek_api_key,
+                    base_url="https://api.deepseek.com",
+                )
+                logger.info("llm.init", provider="deepseek", model=settings.deepseek_model)
+            except Exception as e:
+                logger.error("llm.deepseek_init_failed", error=str(e))
+        elif self.provider == "openai-compatible":
+            try:
+                from openai import AsyncOpenAI
+                self._openai_compatible_client = AsyncOpenAI(
+                    api_key=settings.openai_compatible_api_key or "not-needed",
+                    base_url=settings.openai_compatible_base_url,
+                )
+                logger.info(
+                    "llm.init",
+                    provider="openai-compatible",
+                    model=settings.openai_compatible_model,
+                    base_url=settings.openai_compatible_base_url,
+                )
+            except Exception as e:
+                logger.error("llm.openai_compatible_init_failed", error=str(e))
+        elif self.provider == "gemini" and settings.gemini_api_key:
             try:
                 from google import genai
                 self._gemini_client = genai.Client(api_key=settings.gemini_api_key)
@@ -89,7 +119,9 @@ class LLMService:
                 logger.error("llm.openai_init_failed", error=str(e))
 
         # Fallback: only if the chosen API provider failed to init
-        if not self._gemini_client and not self._openai_client:
+        _any_client = (self._gemini_client or self._openai_client
+                       or self._openai_compatible_client or self._deepseek_client)
+        if not _any_client:
             if settings.gemini_api_key:
                 try:
                     from google import genai
@@ -98,7 +130,18 @@ class LLMService:
                     logger.info("llm.fallback", provider="gemini")
                 except Exception:
                     pass
-            if not self._gemini_client and settings.openai_api_key:
+            if not self._gemini_client and settings.deepseek_api_key:
+                try:
+                    from openai import AsyncOpenAI
+                    self._deepseek_client = AsyncOpenAI(
+                        api_key=settings.deepseek_api_key,
+                        base_url="https://api.deepseek.com",
+                    )
+                    self.provider = "deepseek"
+                    logger.info("llm.fallback", provider="deepseek")
+                except Exception:
+                    pass
+            if not self._gemini_client and not self._deepseek_client and settings.openai_api_key:
                 try:
                     from openai import AsyncOpenAI
                     self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -107,8 +150,11 @@ class LLMService:
                 except Exception:
                     pass
 
-        if not self._gemini_client and not self._openai_client:
-            logger.warning("llm.no_provider", msg="No LLM provider configured — set GEMINI_API_KEY or OPENAI_API_KEY")
+        _any_client = (self._gemini_client or self._openai_client
+                       or self._openai_compatible_client or self._deepseek_client)
+        if not _any_client:
+            logger.warning("llm.no_provider",
+                           msg="No LLM provider configured — set GEMINI_API_KEY, DEEPSEEK_API_KEY, or OPENAI_API_KEY")
             self.provider = "mock"
 
     @retry(
@@ -129,8 +175,14 @@ class LLMService:
         try:
             if self.provider == "gemini" and self._gemini_client:
                 raw = await self._generate_gemini(system_prompt, user_prompt, temperature, max_tokens)
+            elif self.provider == "deepseek" and self._deepseek_client:
+                raw = await self._generate_deepseek(system_prompt, user_prompt, temperature, max_tokens)
             elif self.provider == "openai" and self._openai_client:
                 raw = await self._generate_openai(system_prompt, user_prompt, temperature, max_tokens)
+            elif self.provider == "openai-compatible" and self._openai_compatible_client:
+                raw = await self._generate_openai_compatible(
+                    system_prompt, user_prompt, temperature, max_tokens
+                )
             elif self.provider == "ollama":
                 raw = await self._generate_ollama(system_prompt, user_prompt, temperature, max_tokens)
             elif self.provider == "mock":
@@ -278,8 +330,60 @@ class LLMService:
         max_tokens: int,
     ) -> str:
         """Generate content using OpenAI API."""
-        response = await self._openai_client.chat.completions.create(
-            model=settings.openai_model,
+        return await self._generate_openai_chat(
+            self._openai_client,
+            settings.openai_model,
+            system_prompt,
+            user_prompt,
+            temperature,
+            max_tokens,
+        )
+
+    async def _generate_deepseek(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """Generate content using DeepSeek API (OpenAI-compatible)."""
+        return await self._generate_openai_chat(
+            self._deepseek_client,
+            settings.deepseek_model,
+            system_prompt,
+            user_prompt,
+            temperature,
+            max_tokens,
+        )
+
+    async def _generate_openai_compatible(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """Generate content through an OpenAI-compatible chat completions API."""
+        return await self._generate_openai_chat(
+            self._openai_compatible_client,
+            settings.openai_compatible_model,
+            system_prompt,
+            user_prompt,
+            temperature,
+            max_tokens,
+        )
+
+    @staticmethod
+    async def _generate_openai_chat(
+        client,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        response = await client.chat.completions.create(
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -288,7 +392,11 @@ class LLMService:
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
         )
-        return response.choices[0].message.content
+        msg = response.choices[0].message
+        content = msg.content or ""
+        if not content and getattr(msg, "reasoning_content", None):
+            content = msg.reasoning_content
+        return content
 
     @staticmethod
     def _parse_json(text: str) -> dict:

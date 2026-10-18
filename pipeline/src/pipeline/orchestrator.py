@@ -385,6 +385,15 @@ def settings_provider() -> str:
 def settings_model() -> str:
     try:
         from ..config import settings
-        return settings.gemini_model if settings.llm_provider == "gemini" else settings.openai_model
+        provider = settings.llm_provider.strip().lower().replace("_", "-")
+        if provider == "gemini":
+            return settings.gemini_model
+        if provider == "deepseek":
+            return settings.deepseek_model
+        if provider == "openai-compatible":
+            return settings.openai_compatible_model
+        if provider == "ollama":
+            return settings.ollama_model
+        return settings.openai_model
     except Exception:
         return "unknown"

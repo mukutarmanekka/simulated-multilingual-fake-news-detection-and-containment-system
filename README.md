@@ -81,7 +81,11 @@ TAVILY_API_KEY=your_tavily_api_key_here
 GOOGLE_FACTCHECK_API_KEY=your_google_factcheck_key_here
 ```
 
+> **DeepSeek API:** To use DeepSeek's hosted API, set `LLM_PROVIDER=deepseek`, provide your `DEEPSEEK_API_KEY`, and optionally specify `DEEPSEEK_MODEL=deepseek-chat` (or `deepseek-flash`). DeepSeek automatically connects to `https://api.deepseek.com` and requests structured JSON output.
+
 > **Local LLM Alternative (Ollama):** If you prefer running local models, set `LLM_PROVIDER=ollama`, `OLLAMA_MODEL=llama3:8b` (or `deepseek-r1:8b`), and ensure Ollama is running on `http://localhost:11434`. If Ollama is unreachable, the system automatically falls back to Gemini or mock mode.
+
+> **Custom OpenAI-compatible API:** To use a hosted or local model exposing the OpenAI Chat Completions API, set `LLM_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_BASE_URL` (including `/v1`), and `OPENAI_COMPATIBLE_MODEL`. Set `OPENAI_COMPATIBLE_API_KEY` if the server requires authentication; it can be blank for local servers. Requests use the `/chat/completions` endpoint and request JSON-mode output.
 
 ---
 

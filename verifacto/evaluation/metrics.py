@@ -7,6 +7,130 @@ labels are used HERE for the false-positive accounting only.
 
 import numpy as np
 
+VERDICT_BUCKETS = ("REAL", "FAKE", "UNCERTAIN", "NO_CLAIMS", "ERROR")
+
+
+def _verdict_bucket(detection):
+    if detection.status in ("error", "timeout"):
+        return "ERROR"
+    if detection.status == "no_claims":
+        return "NO_CLAIMS"
+    if detection.verdict in ("REAL", "FAKE", "UNCERTAIN"):
+        return detection.verdict
+    return "ERROR"
+
+
+def _mean(values):
+    if not values:
+        return 0.0
+    return float(np.mean(values))
+
+
+def detector_summary(posts, detections):
+    """Detector quality, uncertainty, failures, and provider usage.
+
+    Ground-truth labels are used HERE for evaluation only. They never
+    influence the detector or containment decisions.
+    """
+    verdict_counts = {bucket: 0 for bucket in VERDICT_BUCKETS}
+    status_counts = {}
+    confusion = {
+        truth: {bucket: 0 for bucket in VERDICT_BUCKETS}
+        for truth in ("real", "fake")
+    }
+    blacklist_count = 0
+    confidence_values = []
+    support_values = []
+    latency_values = []
+    provider_usage = {}
+
+    for post in posts:
+        detection = detections[post.id]
+        bucket = _verdict_bucket(detection)
+        verdict_counts[bucket] += 1
+
+        status = detection.status or "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+        if detection.blacklisted:
+            blacklist_count += 1
+        if detection.status == "ok":
+            confidence_values.append(detection.confidence)
+            if detection.support_score is not None:
+                support_values.append(detection.support_score)
+        if detection.latency_ms is not None:
+            latency_values.append(detection.latency_ms)
+        if detection.provider_usage:
+            for key, value in detection.provider_usage.items():
+                if isinstance(value, (int, float)):
+                    provider_usage[key] = provider_usage.get(key, 0) + value
+
+        truth = getattr(post, "true_label", None)
+        if truth in confusion:
+            confusion[truth][bucket] += 1
+
+    total = len(posts)
+    n_real = sum(1 for post in posts if getattr(post, "true_label", None) == "real")
+    n_fake = sum(1 for post in posts if getattr(post, "true_label", None) == "fake")
+    successful = status_counts.get("ok", 0) + status_counts.get("no_claims", 0)
+
+    real_fp = confusion["real"]["FAKE"]
+    fake_real = confusion["fake"]["REAL"]
+    fake_uncertain = confusion["fake"]["UNCERTAIN"]
+    fake_not_flagged = sum(
+        confusion["fake"][bucket]
+        for bucket in ("REAL", "UNCERTAIN", "NO_CLAIMS", "ERROR")
+    )
+
+    cache_verified = sum(
+        1 for detection in detections.values()
+        if detection.cache_key_verified is True
+    )
+    cache_unverified = sum(
+        1 for detection in detections.values()
+        if detection.cache_key_verified is False
+    )
+
+    return {
+        "n_posts": total,
+        "verdict_counts": verdict_counts,
+        "status_counts": status_counts,
+        "blacklist_count": blacklist_count,
+        "uncertain_count": verdict_counts["UNCERTAIN"],
+        "no_claims_count": verdict_counts["NO_CLAIMS"],
+        "error_count": verdict_counts["ERROR"],
+        "uncertain_fraction": (
+            verdict_counts["UNCERTAIN"] / total if total else 0.0
+        ),
+        "uncertain_share_of_successful": (
+            verdict_counts["UNCERTAIN"] / successful if successful else 0.0
+        ),
+        "no_claims_fraction": (
+            verdict_counts["NO_CLAIMS"] / total if total else 0.0
+        ),
+        "error_fraction": (
+            verdict_counts["ERROR"] / total if total else 0.0
+        ),
+        "detection_coverage": successful / total if total else 0.0,
+        "mean_confidence": _mean(confidence_values),
+        "mean_support_score": _mean(support_values),
+        "mean_latency_ms": _mean(latency_values),
+        "provider_usage": provider_usage,
+        "replay_cache_verified": cache_verified,
+        "replay_cache_unverified": cache_unverified,
+        "ground_truth_confusion": confusion,
+        "false_positive_rate": real_fp / n_real if n_real else 0.0,
+        "dangerous_false_negative_rate": (
+            fake_real / n_fake if n_fake else 0.0
+        ),
+        "fake_uncertain_rate": (
+            fake_uncertain / n_fake if n_fake else 0.0
+        ),
+        "fake_not_flagged_rate": (
+            fake_not_flagged / n_fake if n_fake else 0.0
+        ),
+    }
+
 
 def final_fraction_reached(series, n_users):
     """Final fraction of users reached: total reached / users."""
@@ -67,16 +191,22 @@ def false_positive_cost(posts, detections, baseline_results, strategy_results, n
     """
     fp_count = 0
     uncertain_count = 0
+    error_count = 0
+    blacklist_count = 0
     reach_lost = []
     n_real = 0
     for post in posts:
         detection = detections[post.id]
-        if detection.is_fake is None:
+        if detection.blacklisted:
+            blacklist_count += 1
+        if detection.status in ("error", "timeout"):
+            error_count += 1
+        elif detection.status == "no_claims" or detection.verdict == "UNCERTAIN":
             uncertain_count += 1
         if post.true_label != "real":
             continue
         n_real += 1
-        if detection.is_fake is True:
+        if detection.status == "ok" and detection.verdict == "FAKE":
             fp_count += 1
             for run in range(n_runs):
                 base = baseline_results[post.id][run].total_reached
@@ -87,6 +217,8 @@ def false_positive_cost(posts, detections, baseline_results, strategy_results, n
         "fp_fraction": fp_count / n_real if n_real > 0 else 0.0,
         "real_reach_lost": aggregate_over_runs(reach_lost),
         "uncertain_count": uncertain_count,
+        "error_count": error_count,
+        "blacklist_count": blacklist_count,
     }
 
 

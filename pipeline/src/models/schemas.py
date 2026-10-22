@@ -10,9 +10,9 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
-from .enums import InputType, ReviewStatus, Stance, Verdict
+from .enums import InputType, ReviewStatus, Stance, UserVerdict, Verdict
 
 
 # ── Step 1: Claim Extraction ─────────────────────────────────────────
@@ -57,6 +57,7 @@ class ClaimMatchResult(BaseModel):
     match_source: Optional[str] = None  # 'vector_db', 'exact', 'factcheck_api'
     similarity: Optional[float] = None
     previous_verdict: Optional[Verdict] = None
+    previous_confidence: Optional[float] = None
     matched_claim_text: Optional[str] = None
     external_url: Optional[str] = None
 
@@ -172,13 +173,15 @@ class EvidenceItem(BaseModel):
     published_date: Optional[str] = None
     snippet: str
     stance: Stance
+    credibility_score: Optional[float] = None
+    relevance_score: Optional[float] = None
 
 
 class FinalClaimResponse(BaseModel):
     """Final response for a single claim verification."""
     claim: str
     normalized_claim: str
-    verdict: Verdict
+    verdict: UserVerdict
     confidence: float
     reasoning: list[str] = Field(default_factory=list)
     evidence: list[EvidenceItem] = Field(default_factory=list)
@@ -187,6 +190,17 @@ class FinalClaimResponse(BaseModel):
     escalation_reason: Optional[str] = None
     claim_id: Optional[str] = None
     pipeline_duration_ms: Optional[int] = None
+    # ── Internal evidence verdict (preserved for audit/debugging) ──
+    evidence_verdict: Optional[Verdict] = None
+    verdict_reason: Optional[str] = None
+    verdict_support_score: Optional[float] = None
+    # ── Source assessment metadata ───────────────────────────
+    source_url: Optional[str] = None
+    source_domain: Optional[str] = None
+    source_tier: Optional[str] = None
+    source_tier_number: Optional[int] = None
+    matched_blacklist_domain: Optional[str] = None
+    blacklist_category: Optional[str] = None
     # ── Language metadata ─────────────────────────────────────
     detected_language: Optional[str] = None       # ISO 639-1 code
     language_name: Optional[str] = None           # Human-readable
@@ -206,6 +220,7 @@ class VerificationJobResponse(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     completed_at: Optional[str] = None
     total_duration_ms: Optional[int] = None
+    source_url: Optional[str] = None
     # ── Language metadata ─────────────────────────────────────
     detected_language: Optional[str] = None
     language_name: Optional[str] = None
@@ -221,6 +236,15 @@ class VerifyRequest(BaseModel):
     text: str = Field(..., min_length=10, max_length=50000)
     input_type: InputType = InputType.ARTICLE
     job_id: Optional[str] = None
+    source_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("source_url", "url"),
+        description=(
+            "Optional URL or domain of the publisher that supplied the text. "
+            "Used for the Tier 4 blacklist short-circuit. The URL is never "
+            "inferred from URLs merely mentioned inside the text."
+        ),
+    )
 
 
 class HumanReviewRequest(BaseModel):

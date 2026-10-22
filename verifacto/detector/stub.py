@@ -42,9 +42,15 @@ class StubDetector:
                 confidence=confidence,
                 verdict_summary=verdict_summary,
                 provider="stub",
+                detector_mode="stub",
+                post_id=post.id,
+                claim_text=post.text,
+                language=post.language,
+                source_url=post.source_url,
+                status="ok",
             )
 
-    def detect(self, text, language, post_id):
-        # text and language are accepted for interface parity and never
-        # inspected; the verdict depends only on the post id
+    def detect(self, text, language, post_id, source_url=None):
+        # text/language/source_url are accepted for interface parity and
+        # never inspected; the verdict depends only on the post id
         return self._verdicts[post_id]

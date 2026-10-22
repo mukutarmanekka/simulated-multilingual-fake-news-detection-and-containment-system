@@ -13,6 +13,7 @@ from ..models.schemas import (
 )
 from ..models.enums import Verdict, Stance
 from ..services.llm_service import llm_service
+from ..utils.redaction import redact_secrets
 from ..config import settings
 
 logger = structlog.get_logger()
@@ -46,6 +47,13 @@ CRITICAL RULES:
 - If sources disagree, say CONFLICTING.
 - Cite exact snippets from the evidence.
 - Each reasoning step must reference a specific evidence document.
+- Every sub-claim MUST be an assertion actually made by the CLAIM. Do NOT add
+  background facts, context, or auxiliary true statements that the claim does
+  not assert.
+- If the claim makes one central assertion, return one sub-claim for it. If it
+  makes several assertions, split those assertions.
+- The FIRST sub-claim MUST be the central assertion of the claim. Later
+  sub-claims are the claim's own secondary assertions, not background facts.
 
 VERDICT VALUES: SUPPORTED, REFUTED, NOT_ENOUGH_EVIDENCE, CONFLICTING
 
@@ -158,6 +166,49 @@ Perform multi-step verification. Break the claim into sub-claims, analyze each a
     return result
 
 
+def build_stance_label_map(id2label: dict | None) -> dict[int, Stance]:
+    """Map the NLI model's output indices to pipeline stance labels.
+
+    The label order is model-specific. For
+    ``cross-encoder/nli-deberta-v3-base`` it is
+    ``{0: contradiction, 1: entailment, 2: neutral}``. Hardcoding the
+    wrong order silently turns neutral evidence into SUPPORTS and
+    entailment into NEUTRAL. Prefer the model config and fall back to the
+    standard NLI order only for generic ``LABEL_N`` configs.
+    """
+    fallback = {
+        0: Stance.REFUTES,
+        1: Stance.SUPPORTS,
+        2: Stance.NEUTRAL,
+    }
+
+    if not id2label:
+        return fallback
+
+    labels = {str(label).strip().lower() for label in id2label.values()}
+    if all(label.startswith("label_") for label in labels):
+        return fallback
+
+    mapping: dict[int, Stance] = {}
+    for raw_index, raw_label in id2label.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+
+        label = str(raw_label).strip().lower()
+        if "contradict" in label or "refut" in label:
+            mapping[index] = Stance.REFUTES
+        elif "entail" in label or "support" in label:
+            mapping[index] = Stance.SUPPORTS
+        else:
+            mapping[index] = Stance.NEUTRAL
+
+    if not mapping:
+        return fallback
+    return mapping
+
+
 def _classify_stances(
     claim_text: str,
     evidence: list[RankedEvidence],
@@ -166,7 +217,9 @@ def _classify_stances(
 
     try:
         nli = _get_nli_model()
-        label_map = {0: Stance.REFUTES, 1: Stance.NEUTRAL, 2: Stance.SUPPORTS}
+        model_config = getattr(getattr(nli, "model", None), "config", None)
+        id2label = getattr(model_config, "id2label", None)
+        label_map = build_stance_label_map(id2label)
 
         for doc in evidence:
             doc_text = " ".join(doc.passages[:2]) if doc.passages else doc.title
@@ -194,7 +247,7 @@ def _classify_stances(
             ))
 
     except Exception as e:
-        logger.warning("nli.error", error=str(e))
+        logger.warning("nli.error", error=redact_secrets(str(e)))
         for doc in evidence:
             stances.append(EvidenceStance(
                 doc_id=doc.doc_id,

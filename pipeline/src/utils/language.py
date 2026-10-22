@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 import structlog
 
+from .redaction import redact_secrets
+
 logger = structlog.get_logger()
 
 # ISO-639-1 code → human-readable name (covers the most common languages)
@@ -59,7 +61,7 @@ def detect_language(text: str) -> str:
         code = detect(text)
         return code
     except Exception as exc:
-        logger.warning("language.detect_error", error=str(exc))
+        logger.warning("language.detect_error", error=redact_secrets(str(exc)))
         return "en"
 
 
@@ -98,7 +100,11 @@ def translate_to_english(text: str, source_lang: str) -> str | None:
         return " ".join(chunks)
 
     except Exception as exc:
-        logger.warning("language.translate_error", source=source_lang, error=str(exc))
+        logger.warning(
+            "language.translate_error",
+            source=source_lang,
+            error=redact_secrets(str(exc)),
+        )
         # Fallback to LLM translation if available
         try:
             from ..config import settings
@@ -114,7 +120,10 @@ def translate_to_english(text: str, source_lang: str) -> str | None:
                     logger.info("language.llm_translated", source=source_lang, length=len(translated_text))
                     return translated_text
         except Exception as llm_err:
-            logger.warning("language.llm_translate_failed", error=str(llm_err))
+            logger.warning(
+                "language.llm_translate_failed",
+                error=redact_secrets(str(llm_err)),
+            )
         return None
 
 

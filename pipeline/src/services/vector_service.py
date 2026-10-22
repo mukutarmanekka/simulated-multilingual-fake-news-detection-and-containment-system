@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 
 from ..config import settings
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -48,7 +49,7 @@ class VectorService:
                     atexit.register(self._client.close)
                     logger.info("vector.client_local_storage", path=str(storage_path))
                 except Exception as local_err:
-                    logger.warning("vector.local_storage_failed", error=str(local_err),
+                    logger.warning("vector.local_storage_failed", error=redact_secrets(str(local_err)),
                                    msg="Falling back to in-memory Qdrant")
                     self._client = QdrantClient(":memory:")
         return self._client
@@ -89,7 +90,7 @@ class VectorService:
                     collection=settings.qdrant_collection,
                 )
         except Exception as e:
-            logger.warning("vector.ensure_collection.error", error=str(e),
+            logger.warning("vector.ensure_collection.error", error=redact_secrets(str(e)),
                            msg="Falling back to in-memory Qdrant")
             try:
                 self._client = QdrantClient(":memory:")
@@ -104,7 +105,7 @@ class VectorService:
                 )
                 logger.info("vector.in_memory_collection_ready")
             except Exception as e2:
-                logger.error("vector.fallback_failed", error=str(e2))
+                logger.error("vector.fallback_failed", error=redact_secrets(str(e2)))
 
     def encode(self, text: str) -> list[float]:
         return self.encoder.encode(text).tolist()
@@ -119,9 +120,10 @@ class VectorService:
     ) -> None:
         embedding = self.encode(claim_text)
 
-        payload = {
+        payload: dict[str, Any] = {
             "claim_text": claim_text,
             "claim_id": claim_id,
+            "policy_version": settings.verdict_policy_version,
         }
         if verdict:
             payload["verdict"] = verdict
@@ -163,20 +165,22 @@ class VectorService:
 
             matches = []
             for point in results.points:
+                payload = point.payload or {}
                 matches.append({
                     "id": str(point.id),
                     "score": point.score,
-                    "claim_text": point.payload.get("claim_text", ""),
-                    "claim_id": point.payload.get("claim_id", ""),
-                    "verdict": point.payload.get("verdict"),
-                    "confidence": point.payload.get("confidence"),
+                    "claim_text": payload.get("claim_text", ""),
+                    "claim_id": payload.get("claim_id", ""),
+                    "verdict": payload.get("verdict"),
+                    "confidence": payload.get("confidence"),
+                    "policy_version": payload.get("policy_version"),
                 })
 
             logger.debug("vector.search", query_len=len(claim_text), matches=len(matches))
             return matches
 
         except Exception as e:
-            logger.warning("vector.search.error", error=str(e))
+            logger.warning("vector.search.error", error=redact_secrets(str(e)))
             return []
 
     async def get_collection_info(self) -> dict:
@@ -185,7 +189,7 @@ class VectorService:
             return {
                 "name": settings.qdrant_collection,
                 "points_count": info.points_count,
-                "vectors_count": info.vectors_count,
+                "vectors_count": getattr(info, "vectors_count", None),
                 "status": info.status.value,
             }
         except Exception as e:

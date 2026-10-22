@@ -17,6 +17,7 @@ async def test_escalation_low_confidence():
     evidence = RerankedEvidenceResult(claim_id="c1", ranked_evidence=[])
     decision = await check_escalation("A random company changed its logo", verification, evidence)
     assert decision.requires_human_review is True
+    assert decision.reason is not None
     assert "Low confidence" in decision.reason
 
 

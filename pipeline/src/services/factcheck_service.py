@@ -10,6 +10,8 @@ import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
+from ..utils.http_retry import RETRYABLE_STATUS_CODES, retry_on_transient_http
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -21,6 +23,10 @@ class FactCheckService:
 
     def __init__(self):
         self._client: httpx.AsyncClient | None = None
+        # Observability for live integration checks. These never contain
+        # credentials: only a short status/error category.
+        self.last_error: str | None = None
+        self.last_status: int | None = None
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -28,7 +34,12 @@ class FactCheckService:
             self._client = httpx.AsyncClient(timeout=15)
         return self._client
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_on_transient_http,
+        reraise=True,
+    )
     async def search_claims(
         self,
         query: str,
@@ -46,7 +57,11 @@ class FactCheckService:
         - publisher: The fact-checking organization
         - review_date: When the review was published
         """
+        self.last_error = None
+        self.last_status = None
+
         if not settings.google_factcheck_api_key:
+            self.last_error = "missing_api_key"
             logger.debug("factcheck.no_key", msg="Skipping — no API key configured")
             return []
 
@@ -61,6 +76,7 @@ class FactCheckService:
                 },
             )
             response.raise_for_status()
+            self.last_status = response.status_code
             data = response.json()
 
             results = []
@@ -84,13 +100,28 @@ class FactCheckService:
             return results
 
         except httpx.HTTPStatusError as e:
+            self.last_status = e.response.status_code
             if e.response.status_code == 429:
+                self.last_error = "rate_limited"
                 logger.warning("factcheck.rate_limited")
             else:
+                self.last_error = f"http_{e.response.status_code}"
                 logger.error("factcheck.error", status=e.response.status_code)
+
+            if e.response.status_code in RETRYABLE_STATUS_CODES:
+                # Let tenacity retry transient 429/5xx responses.
+                raise
             return []
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            self.last_error = type(e).__name__
+            logger.error(
+                "factcheck.transport_error",
+                error=redact_secrets(str(e)),
+            )
+            raise
         except Exception as e:
-            logger.error("factcheck.error", error=str(e))
+            self.last_error = type(e).__name__
+            logger.error("factcheck.error", error=redact_secrets(str(e)))
             return []
 
     async def close(self):

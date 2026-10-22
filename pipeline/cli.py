@@ -16,9 +16,12 @@ import asyncio
 import os
 import sys
 import time
+from typing import Any
 
 # Ensure the pipeline src is importable
 sys.path.insert(0, os.path.dirname(__file__))
+
+from src.utils.redaction import redact_secrets
 
 # Load environment variables from the project root .env
 from dotenv import load_dotenv
@@ -69,6 +72,11 @@ class C:
 
 # ── Verdict Styling ──────────────────────────────────────────────────
 VERDICT_STYLE = {
+    "REAL":                (C.BG_GREEN + C.WHITE + C.BOLD, "[REAL]"),
+    "FAKE":                (C.BG_RED + C.WHITE + C.BOLD,   "[FAKE]"),
+    "UNCERTAIN":           (C.BG_YELLOW + C.WHITE + C.BOLD, "[UNCERTAIN]"),
+    # Legacy internal verdicts still appear in /history rows written before
+    # the three-way user verdict was introduced.
     "SUPPORTED":           (C.BG_GREEN + C.WHITE + C.BOLD, "[SUPPORTED]"),
     "REFUTED":             (C.BG_RED + C.WHITE + C.BOLD,   "[REFUTED]"),
     "NOT_ENOUGH_EVIDENCE": (C.BG_YELLOW + C.WHITE + C.BOLD, "[NOT ENOUGH EVIDENCE]"),
@@ -128,6 +136,8 @@ def print_result(result_data: dict):
         escalation = claim_result.get("escalation_reason")
         duration = claim_result.get("pipeline_duration_ms", 0)
         claim_original = claim_result.get("original_text")
+        reason_code = claim_result.get("verdict_reason")
+        source_domain = claim_result.get("source_domain")
 
         style, label = VERDICT_STYLE.get(verdict, (C.DIM, f"? {verdict}"))
 
@@ -171,6 +181,10 @@ def print_result(result_data: dict):
         meta_parts = []
         if was_translated:
             meta_parts.append(f"{C.MAGENTA}Translated from {lang_name}{C.RESET}")
+        if source_domain:
+            meta_parts.append(f"{C.DIM}source: {source_domain}{C.RESET}")
+        if reason_code:
+            meta_parts.append(f"{C.DIM}{reason_code}{C.RESET}")
         if matched:
             meta_parts.append(f"{C.YELLOW}Fast-path match{C.RESET}")
         if review:
@@ -217,9 +231,14 @@ def print_history(claims: list[dict]):
         print(f"\n  {C.DIM}No recent verifications found.{C.RESET}\n")
         return
 
+    from src.pipeline.verdict_policy import map_internal_to_user_verdict
+
     print(f"\n  {C.BOLD}{C.CYAN}Recent Verifications ({len(claims)} claims):{C.RESET}\n")
     for i, claim in enumerate(claims[:20], 1):
-        verdict = claim.get("verdict")
+        stored_verdict = claim.get("verdict")
+        verdict = None
+        if stored_verdict:
+            verdict = map_internal_to_user_verdict(stored_verdict).value
         text = claim.get("claim_text", "")[:70]
         conf = claim.get("confidence")
         raw_created = claim.get("created_at", "")
@@ -249,12 +268,12 @@ async def init_services():
         pass  # Will retry on first use
 
 
-async def verify_claim(text: str) -> dict:
+async def verify_claim(text: str, source_url: str | None = None) -> Any:
     """Run the full pipeline on a text input and return the result dict."""
     from src.pipeline.orchestrator import PipelineOrchestrator
 
     orchestrator = PipelineOrchestrator()
-    result = await orchestrator.run(input_text=text)
+    result = await orchestrator.run(input_text=text, source_url=source_url)
 
     # Convert to dict for display
     if hasattr(result, "model_dump"):
@@ -268,19 +287,24 @@ async def get_history(limit: int = 20) -> list[dict]:
     try:
         return await ClaimDB.get_recent_claims(limit=limit)
     except Exception as e:
-        print(f"  {C.RED}Database error: {e}{C.RESET}")
+        print(f"  {C.RED}Database error: {redact_secrets(e)}{C.RESET}")
         return []
 
 
 # ── Main Entry Points ────────────────────────────────────────────────
 
-async def interactive_mode():
+async def interactive_mode(source_url: str | None = None):
     """Run the interactive REPL mode."""
+    current_source_url = source_url
     print_banner()
     print(f"  {C.DIM}Type a news claim to verify (any language), or use these commands:{C.RESET}")
-    print(f"    {C.CYAN}/history{C.RESET}  - Show recent verifications")
-    print(f"    {C.CYAN}/quit{C.RESET}     - Exit the program")
+    print(f"    {C.CYAN}/source URL{C.RESET}  - Set the publisher URL for Tier 4 checking")
+    print(f"    {C.CYAN}/source clear{C.RESET} - Clear the publisher URL")
+    print(f"    {C.CYAN}/history{C.RESET}     - Show recent verifications")
+    print(f"    {C.CYAN}/quit{C.RESET}        - Exit the program")
     print(f"  {C.DIM}Supports 50+ languages — non-English input is auto-translated.{C.RESET}")
+    if current_source_url:
+        print(f"  {C.DIM}Publisher URL: {current_source_url}{C.RESET}")
     print()
 
     # Initialize services
@@ -308,10 +332,28 @@ async def interactive_mode():
             print_history(claims)
             continue
 
+        lowered_input = user_input.lower()
+        if lowered_input == "/source" or lowered_input.startswith("/source "):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) == 1:
+                if current_source_url:
+                    print(f"\n  {C.DIM}Publisher URL: {current_source_url}{C.RESET}\n")
+                else:
+                    print(f"\n  {C.DIM}No publisher URL set.{C.RESET}\n")
+            else:
+                value = parts[1].strip()
+                if value.lower() in ("clear", "none", "off"):
+                    current_source_url = None
+                    print(f"\n  {C.DIM}Publisher URL cleared.{C.RESET}\n")
+                else:
+                    current_source_url = value
+                    print(f"\n  {C.DIM}Publisher URL set to: {current_source_url}{C.RESET}\n")
+            continue
+
         if user_input.lower() in ("/help", "help", "/?"):
             print(f"\n  {C.DIM}Type any news claim or headline to verify it.{C.RESET}")
             print(f"  {C.DIM}Supports 50+ languages — non-English text is auto-translated.{C.RESET}")
-            print(f"  {C.DIM}Commands: /history, /quit, /help{C.RESET}\n")
+            print(f"  {C.DIM}Commands: /source URL, /source clear, /history, /quit, /help{C.RESET}\n")
             continue
 
         # Verify the claim
@@ -319,26 +361,35 @@ async def interactive_mode():
         start = time.time()
 
         try:
-            result = await verify_claim(user_input)
+            result = await verify_claim(user_input, source_url=current_source_url)
             print_result(result)
         except Exception as e:
             elapsed = time.time() - start
-            print(f"\n  {C.RED}[X] Pipeline error ({elapsed:.1f}s): {e}{C.RESET}\n")
+            print(f"\n  {C.RED}[X] Pipeline error ({elapsed:.1f}s): {redact_secrets(e)}{C.RESET}\n")
 
 
-async def single_shot(text: str):
+async def single_shot(text: str, source_url: str | None = None):
     """Verify a single claim and exit."""
+    from src.utils.blacklist import is_blacklisted_source
+
     print_banner()
-    print(f"  {C.DIM}Initializing...{C.RESET}", end="", flush=True)
-    await init_services()
-    print(f"\r  {C.GREEN}[OK] Ready.{C.RESET}          ")
+    if source_url and is_blacklisted_source(source_url):
+        # The orchestrator will return a Tier 4 verdict without using any
+        # detector service, so do not load the vector/embedding models.
+        print(f"  {C.GREEN}[OK] Tier 4 source match — detector services not needed.{C.RESET}")
+    else:
+        print(f"  {C.DIM}Initializing...{C.RESET}", end="", flush=True)
+        await init_services()
+        print(f"\r  {C.GREEN}[OK] Ready.{C.RESET}          ")
+    if source_url:
+        print(f"\n  {C.DIM}Publisher URL: {source_url}{C.RESET}")
     print(f"\n  {C.DIM}[...] Verifying: \"{text[:80]}\"...{C.RESET}\n", flush=True)
 
     try:
-        result = await verify_claim(text)
+        result = await verify_claim(text, source_url=source_url)
         print_result(result)
     except Exception as e:
-        print(f"\n  {C.RED}[X] Pipeline error: {e}{C.RESET}\n")
+        print(f"\n  {C.RED}[X] Pipeline error: {redact_secrets(e)}{C.RESET}\n")
         sys.exit(1)
 
 
@@ -372,6 +423,13 @@ Examples:
         help="A news claim to verify (omit for interactive mode)",
     )
     parser.add_argument(
+        "--source-url", default=None, metavar="URL",
+        help=(
+            "Publisher URL or domain for the article/claim. If it matches the "
+            "Tier 4 blacklist, the pipeline returns FAKE immediately."
+        ),
+    )
+    parser.add_argument(
         "--history", action="store_true",
         help="Show recent verification history",
     )
@@ -381,9 +439,9 @@ Examples:
     if args.history:
         asyncio.run(show_history())
     elif args.claim:
-        asyncio.run(single_shot(args.claim))
+        asyncio.run(single_shot(args.claim, source_url=args.source_url))
     else:
-        asyncio.run(interactive_mode())
+        asyncio.run(interactive_mode(source_url=args.source_url))
 
 
 if __name__ == "__main__":

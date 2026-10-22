@@ -2,6 +2,7 @@
 data/graph.graphml
 data/posts.json
 data/detector_cache.json
+data/detector_cache.backup-*.json
 
 # Experiment outputs
 output/

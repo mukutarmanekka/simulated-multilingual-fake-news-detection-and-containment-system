@@ -6,11 +6,11 @@ for domains encountered during evidence retrieval.
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import structlog
 
 from ..db.postgres import ClaimDB
+from .blacklist import match_blacklisted_source, normalize_hostname
+from .redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -18,7 +18,10 @@ logger = structlog.get_logger()
 
 _SOURCE_CACHE: dict[str, dict] = {}
 
-# Fallback hardcoded tier scores when DB is unavailable
+# Fallback hardcoded tier scores when DB is unavailable.
+# Tier 4 is the configured blacklist (see utils/blacklist.py). It is kept
+# separate from TIER_3 so satire/parody/troll policy decisions do not look
+# like ordinary low-credibility sources.
 TIER_SCORES = {
     "TIER_1": (0.90, 1.00),
     "TIER_2": (0.75, 0.89),
@@ -48,6 +51,9 @@ KNOWN_SOURCES: dict[str, dict] = {
     "nih.gov":            {"tier": "TIER_1", "credibility": 0.92},
     "fda.gov":            {"tier": "TIER_1", "credibility": 0.91},
     "icrc.org":           {"tier": "TIER_1", "credibility": 0.91},
+    # Official publisher for a specific entity: primary for that entity's
+    # history, but still only a prior on article-level support.
+    "toureiffel.paris":   {"tier": "TIER_1", "credibility": 0.90},
 
     # TIER 2 — Major international outlets / strong regional outlets / official Indian news feeds
     "cbc.ca":             {"tier": "TIER_2", "credibility": 0.82},
@@ -75,6 +81,7 @@ KNOWN_SOURCES: dict[str, dict] = {
     "firstpost.com":      {"tier": "TIER_2", "credibility": 0.72},
     "thewire.in":         {"tier": "TIER_2", "credibility": 0.70},
     "aninews.in":         {"tier": "TIER_2", "credibility": 0.74},
+    "britannica.com":     {"tier": "TIER_2", "credibility": 0.85},
 
     # TIER 3 — Niche / aggregators / social / lower-trust / experimental
     "news18.com":         {"tier": "TIER_3", "credibility": 0.68},
@@ -98,28 +105,51 @@ KNOWN_SOURCES: dict[str, dict] = {
     "globaltimes.cn":     {"tier": "TIER_3", "credibility": 0.40},
     "rt.com":             {"tier": "TIER_3", "credibility": 0.35},
     "sputniknews.com":    {"tier": "TIER_3", "credibility": 0.30},
+
+    # General reference, educational, and user-generated sources.
+    # Wikipedia is crowd-edited: a moderate prior, never automatic truth.
+    # Reddit/Facebook/YouTube/Stack Exchange remain below the evidence gate.
+    "wikipedia.org":      {"tier": "TIER_3", "credibility": 0.65},
+    "history.com":        {"tier": "TIER_3", "credibility": 0.72},
+    "hnn.us":             {"tier": "TIER_3", "credibility": 0.65},
+    "artsandculture.google.com": {"tier": "TIER_3", "credibility": 0.70},
+    "history.stackexchange.com": {"tier": "TIER_3", "credibility": 0.45},
+    "youtube.com":        {"tier": "TIER_3", "credibility": 0.35},
+    "youtu.be":           {"tier": "TIER_3", "credibility": 0.35},
 }
 
 
 def extract_domain(url: str) -> str:
-    """Extract the base domain from a URL."""
-    try:
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        # Remove www. prefix
-        if domain.startswith("www."):
-            domain = domain[4:]
-        return domain
-    except Exception:
-        return ""
+    """Extract and normalize the hostname from a URL or bare domain."""
+    return normalize_hostname(url) or ""
+
+
+def clear_source_cache() -> None:
+    """Clear cached credibility lookups (used after registry changes/tests)."""
+    _SOURCE_CACHE.clear()
 
 
 async def get_credibility(url: str) -> dict:
     """
     Get the credibility score and tier for a URL's domain.
 
-    Returns dict with: domain, name, tier, credibility
+    Returns dict with: domain, name, tier, credibility. Tier 4 matches also
+    include tier_number, blacklisted, category, and reason.
     """
+    # Tier 4 must win over the cache, the database, and the built-in tiers.
+    blacklist_match = match_blacklisted_source(url)
+    if blacklist_match is not None:
+        return {
+            "domain": blacklist_match.input_host,
+            "name": blacklist_match.name,
+            "tier": blacklist_match.tier,
+            "tier_number": blacklist_match.tier_number,
+            "credibility": 0.00,
+            "blacklisted": True,
+            "category": blacklist_match.category,
+            "reason": blacklist_match.reason,
+        }
+
     domain = extract_domain(url)
     if not domain:
         return {
@@ -140,7 +170,11 @@ async def get_credibility(url: str) -> dict:
             _SOURCE_CACHE[domain] = source
             return source
     except Exception as e:
-        logger.debug("credibility.db_error", domain=domain, error=str(e))
+        logger.debug(
+            "credibility.db_error",
+            domain=domain,
+            error=redact_secrets(str(e)),
+        )
 
     # Check built-in known sources
     if domain in KNOWN_SOURCES:
@@ -191,6 +225,10 @@ def is_primary_source(url: str, claim_entities: list[str]) -> bool:
     - Press release pages
     - Academic/journal sources
     """
+    # A configured Tier 4 publisher can never be a primary source.
+    if match_blacklisted_source(url) is not None:
+        return False
+
     domain = extract_domain(url)
     url_lower = url.lower()
 

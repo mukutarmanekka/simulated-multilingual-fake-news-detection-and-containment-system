@@ -4,11 +4,23 @@ from enum import Enum
 
 
 class Verdict(str, Enum):
-    """Final verdict for a claim."""
+    """Internal evidence verdict for a claim.
+
+    These values are persisted in ``verification_results`` and remain the
+    detector's fine-grained evidence decision. API and CLI callers receive
+    the three-way ``UserVerdict`` instead.
+    """
     SUPPORTED = "SUPPORTED"
     REFUTED = "REFUTED"
     NOT_ENOUGH_EVIDENCE = "NOT_ENOUGH_EVIDENCE"
     CONFLICTING = "CONFLICTING"
+
+
+class UserVerdict(str, Enum):
+    """User-facing verdict returned to API and CLI callers."""
+    REAL = "REAL"
+    FAKE = "FAKE"
+    UNCERTAIN = "UNCERTAIN"
 
 
 class Stance(str, Enum):
@@ -24,6 +36,7 @@ class SourceTier(str, Enum):
     TIER_2 = "TIER_2"
     TIER_3 = "TIER_3"
     UNKNOWN = "UNKNOWN"
+    # Tier 4: configured publisher blacklist (satire/parody/troll/fake_news).
     BLACKLISTED = "BLACKLISTED"
 
 

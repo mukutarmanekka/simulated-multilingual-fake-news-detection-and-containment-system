@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 import structlog
 
+from ..utils.redaction import redact_secrets
+
 logger = structlog.get_logger()
 
 # Lazy-initialized engine and session
@@ -61,7 +63,7 @@ async def _check_db():
         logger.info("db.connected")
     except Exception as e:
         _db_available = False
-        logger.warning("db.unavailable", error=str(e),
+        logger.warning("db.unavailable", error=redact_secrets(str(e)),
                        msg="PostgreSQL is not available — DB operations will be skipped")
     return _db_available
 
@@ -103,7 +105,7 @@ class ClaimDB:
                 )
                 await session.commit()
         except Exception as e:
-            logger.warning("db.create_job.error", error=str(e))
+            logger.warning("db.create_job.error", error=redact_secrets(str(e)))
         return job_id
 
     @staticmethod
@@ -150,7 +152,7 @@ class ClaimDB:
                 )
                 await session.commit()
         except Exception as e:
-            logger.warning("db.update_job.error", error=str(e))
+            logger.warning("db.update_job.error", error=redact_secrets(str(e)))
 
     @staticmethod
     async def store_claim(
@@ -215,7 +217,7 @@ class ClaimDB:
                 )
                 await session.commit()
         except Exception as e:
-            logger.warning("db.store_claim.error", error=str(e))
+            logger.warning("db.store_claim.error", error=redact_secrets(str(e)))
 
     @staticmethod
     async def store_verification(
@@ -266,7 +268,7 @@ class ClaimDB:
                 )
                 await session.commit()
         except Exception as e:
-            logger.warning("db.store_verification.error", error=str(e))
+            logger.warning("db.store_verification.error", error=redact_secrets(str(e)))
         return verification_id
 
     @staticmethod
@@ -328,7 +330,7 @@ class ClaimDB:
                 )
                 await session.commit()
         except Exception as e:
-            logger.warning("db.store_evidence.error", error=str(e))
+            logger.warning("db.store_evidence.error", error=redact_secrets(str(e)))
         return evidence_id
 
     @staticmethod
@@ -367,7 +369,7 @@ class ClaimDB:
                 )
                 await session.commit()
         except Exception as e:
-            logger.warning("db.create_escalation.error", error=str(e))
+            logger.warning("db.create_escalation.error", error=redact_secrets(str(e)))
         return escalation_id
 
     @staticmethod
@@ -436,7 +438,7 @@ class ClaimDB:
                         "credibility": row[3],
                     }
         except Exception as e:
-            logger.debug("db.get_source.error", error=str(e))
+            logger.debug("db.get_source.error", error=redact_secrets(str(e)))
         return None
 
     @staticmethod
@@ -456,7 +458,7 @@ class ClaimDB:
                 if row:
                     return dict(row._mapping)
         except Exception as e:
-            logger.debug("db.get_job.error", error=str(e))
+            logger.debug("db.get_job.error", error=redact_secrets(str(e)))
         return None
 
     @staticmethod
@@ -483,7 +485,7 @@ class ClaimDB:
                 )
                 return [dict(row._mapping) for row in result.fetchall()]
         except Exception as e:
-            logger.debug("db.get_reviews.error", error=str(e))
+            logger.debug("db.get_reviews.error", error=redact_secrets(str(e)))
         return []
 
     @staticmethod
@@ -521,7 +523,7 @@ class ClaimDB:
                 # The orchestrator SHOULD update the results column in verification_jobs.
                 # Let's check orchestrator.py again.
         except Exception as e:
-            logger.debug("db.get_job_results.error", error=str(e))
+            logger.debug("db.get_job_results.error", error=redact_secrets(str(e)))
         return []
 
     @staticmethod
@@ -548,6 +550,6 @@ class ClaimDB:
                 )
                 return [dict(row._mapping) for row in result.fetchall()]
         except Exception as e:
-            logger.debug("db.get_claims.error", error=str(e))
+            logger.debug("db.get_claims.error", error=redact_secrets(str(e)))
         return []
 

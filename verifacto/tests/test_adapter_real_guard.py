@@ -40,3 +40,23 @@ def test_real_providers_pass():
     ensure_real_provider("gemini")
     ensure_real_provider("openai")
     ensure_real_provider("ollama")
+
+
+def test_real_mode_requires_explicit_live_permission():
+    from verifacto.main import _build_detector
+
+    args = SimpleNamespace(detector="real", allow_live=False)
+    with pytest.raises(SystemExit):
+        _build_detector(args, [])
+
+
+def test_replay_mode_does_not_fall_back_when_cache_missing(
+    tmp_path, monkeypatch
+):
+    from verifacto import config
+    from verifacto.main import _build_detector
+
+    monkeypatch.setattr(config, "CACHE_PATH", tmp_path / "missing.json")
+    args = SimpleNamespace(detector="replay", allow_live=False)
+    with pytest.raises(SystemExit):
+        _build_detector(args, [])

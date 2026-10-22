@@ -12,6 +12,7 @@ import structlog
 
 from ..services.llm_service import llm_service
 from ..models.schemas import ExtractedClaim, ClaimExtractionResult
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -114,7 +115,10 @@ Return the structured JSON with extracted claims."""
     try:
         claims = _validate_entities_spacy(claims)
     except Exception as e:
-        logger.debug("claim_extractor.spacy_validation_skipped", error=str(e))
+        logger.debug(
+            "claim_extractor.spacy_validation_skipped",
+            error=redact_secrets(str(e)),
+        )
 
     logger.info(
         "claim_extractor.done",

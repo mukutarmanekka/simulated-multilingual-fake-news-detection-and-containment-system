@@ -8,7 +8,6 @@ Assigns source credibility scores and extracts relevant passages.
 from __future__ import annotations
 
 import asyncio
-from urllib.parse import urlparse
 
 import structlog
 
@@ -16,7 +15,8 @@ from ..models.schemas import NormalizedClaim, RetrievedDocument, EvidenceRetriev
 from ..services.search_service import search_service
 from ..services.news_service import news_service
 from ..services.llm_service import llm_service
-from ..utils.source_credibility import get_credibility, is_primary_source
+from ..utils.source_credibility import extract_domain, get_credibility, is_primary_source
+from ..utils.redaction import redact_secrets
 from ..config import settings
 
 logger = structlog.get_logger()
@@ -72,8 +72,11 @@ async def retrieve_evidence(claim: NormalizedClaim) -> EvidenceRetrievalResult:
     results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
     for result_set in results:
-        if isinstance(result_set, Exception):
-            logger.warning("evidence_retriever.search_error", error=str(result_set))
+        if isinstance(result_set, BaseException):
+            logger.warning(
+                "evidence_retriever.search_error",
+                error=redact_secrets(str(result_set)),
+            )
             continue
         for item in result_set:
             url = item.get("url", "")
@@ -99,9 +102,7 @@ async def retrieve_evidence(claim: NormalizedClaim) -> EvidenceRetrievalResult:
 
     for item in all_results[:settings.max_evidence_results]:
         url = item.get("url", "")
-        domain = urlparse(url).netloc if url else ""
-        if domain.startswith("www."):
-            domain = domain[4:]
+        domain = extract_domain(url)
 
         # Get source credibility
         cred = await get_credibility(url)
@@ -188,7 +189,10 @@ Key entities: {', '.join(entity_names) if entity_names else 'None identified'}""
         return parsed_queries[:5]
 
     except Exception as e:
-        logger.warning("evidence_retriever.query_gen_error", error=str(e))
+        logger.warning(
+            "evidence_retriever.query_gen_error",
+            error=redact_secrets(str(e)),
+        )
         # Fallback: use the claim text directly
         return [claim_text]
 

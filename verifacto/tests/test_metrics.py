@@ -4,12 +4,14 @@ from verifacto.data.posts import Post
 from verifacto.detector.base import DetectionResult
 from verifacto.evaluation.metrics import (
     aggregate_over_runs,
+    detector_summary,
     false_positive_cost,
     final_fraction_reached,
     interventions_used,
     peak_spread,
     time_to_containment,
 )
+from verifacto.detector.base import error_detection
 from verifacto.simulation.experiment import PostRunResult
 
 
@@ -84,3 +86,77 @@ def test_false_positive_cost_only_real_posts():
     assert cost["fp_fraction"] == 1 / 3
     assert cost["real_reach_lost"]["mean"] == 40.0
     assert cost["uncertain_count"] == 1
+    assert cost["error_count"] == 0
+
+
+def _error(post_id=3):
+    return error_detection(
+        post_id=post_id,
+        text="t",
+        language="en",
+        source_url=None,
+        provider="deepseek",
+        detector_mode="real",
+        status="error",
+        error="provider failure",
+    )
+
+
+def test_detector_summary_separates_uncertainty_and_errors():
+    posts = [
+        _post(0, "fake"),
+        _post(1, "real"),
+        _post(2, "fake"),
+        _post(3, "real"),
+    ]
+    detections = {
+        0: _fake(),
+        1: _real(),
+        2: _uncertain(),
+        3: _error(3),
+    }
+
+    summary = detector_summary(posts, detections)
+
+    assert summary["verdict_counts"] == {
+        "REAL": 1,
+        "FAKE": 1,
+        "UNCERTAIN": 1,
+        "NO_CLAIMS": 0,
+        "ERROR": 1,
+    }
+    assert summary["status_counts"] == {"ok": 3, "error": 1}
+    assert summary["uncertain_count"] == 1
+    assert summary["error_count"] == 1
+    assert summary["false_positive_rate"] == 0.0
+    assert summary["dangerous_false_negative_rate"] == 0.0
+    assert summary["fake_not_flagged_rate"] == 0.5
+    assert summary["ground_truth_confusion"]["fake"]["FAKE"] == 1
+    assert summary["ground_truth_confusion"]["fake"]["UNCERTAIN"] == 1
+    assert summary["ground_truth_confusion"]["real"]["ERROR"] == 1
+
+
+def test_detector_summary_counts_cache_verification():
+    posts = [_post(0, "real"), _post(1, "fake"), _post(2, "real")]
+    verified = _real()
+    verified.cache_key_verified = True
+    unverified = _fake()
+    unverified.cache_key_verified = False
+    unverified.detector_mode = "replay"
+    verified.detector_mode = "replay"
+    detections = {0: verified, 1: unverified, 2: _uncertain()}
+
+    summary = detector_summary(posts, detections)
+
+    assert summary["replay_cache_verified"] == 1
+    assert summary["replay_cache_unverified"] == 1
+
+
+def test_uncertain_is_not_counted_as_fake():
+    posts = [_post(0, "real"), _post(1, "fake")]
+    detections = {0: _real(), 1: _uncertain()}
+    used = interventions_used(posts, detections, users_throttled=10)
+    assert used == {"posts_acted_on": 0, "users_throttled": 10}
+    summary = detector_summary(posts, detections)
+    assert summary["false_positive_rate"] == 0.0
+    assert summary["fake_not_flagged_rate"] == 1.0

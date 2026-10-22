@@ -13,6 +13,8 @@ import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
+from ..utils.http_retry import retry_on_transient_http
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -22,6 +24,9 @@ class SearchService:
 
     def __init__(self):
         self._client: httpx.AsyncClient | None = None
+        # Observability for live integration checks. No credentials here.
+        self.last_provider: str | None = None
+        self.last_error: str | None = None
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -29,7 +34,12 @@ class SearchService:
             self._client = httpx.AsyncClient(timeout=30, follow_redirects=True)
         return self._client
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=15))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=15),
+        retry=retry_on_transient_http,
+        reraise=True,
+    )
     async def search_brave(self, query: str, count: int = 10) -> list[dict]:
         """Search using Brave Search API."""
         if not settings.brave_search_api_key:
@@ -64,14 +74,26 @@ class SearchService:
                     "source_domain": urlparse(item.get("url", "")).netloc,
                 })
 
+            self.last_provider = "brave"
+            self.last_error = None
             logger.debug("search.brave", query=query[:80], results=len(results))
             return results
 
         except Exception as e:
-            logger.error("search.brave.error", query=query[:80], error=str(e))
+            self.last_error = type(e).__name__
+            logger.error(
+                "search.brave.error",
+                query=query[:80],
+                error=redact_secrets(str(e)),
+            )
             raise
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=10))
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_on_transient_http,
+        reraise=True,
+    )
     async def search_google_cse(self, query: str, count: int = 10) -> list[dict]:
         """Search using Google Custom Search Engine (fallback)."""
         if not settings.google_cse_api_key or not settings.google_cse_cx:
@@ -103,10 +125,16 @@ class SearchService:
             return results
 
         except Exception as e:
-            logger.error("search.google_cse.error", error=str(e))
+            self.last_error = type(e).__name__
+            logger.error("search.google_cse.error", error=redact_secrets(str(e)))
             return []
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=15))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=15),
+        retry=retry_on_transient_http,
+        reraise=True,
+    )
     async def search_tavily(self, query: str, count: int = 10) -> list[dict]:
         """Search using Tavily Search API."""
         if not settings.tavily_api_key:
@@ -139,15 +167,25 @@ class SearchService:
                     "source_domain": urlparse(item.get("url", "")).netloc,
                 })
 
+            self.last_provider = "tavily"
+            self.last_error = None
             logger.debug("search.tavily", query=query[:80], results=len(results))
             return results
 
         except Exception as e:
-            logger.error("search.tavily.error", query=query[:80], error=str(e))
+            self.last_error = type(e).__name__
+            logger.error(
+                "search.tavily.error",
+                query=query[:80],
+                error=redact_secrets(str(e)),
+            )
             raise
 
     async def search(self, query: str, count: int = 10) -> list[dict]:
         """Search using the best available search provider."""
+        self.last_provider = None
+        self.last_error = None
+
         # Use Tavily if explicitly provided or if Brave key looks like a Tavily key
         effective_tavily_key = settings.tavily_api_key or (
             settings.brave_search_api_key if settings.brave_search_api_key and settings.brave_search_api_key.startswith("tvly-") else None
@@ -161,25 +199,48 @@ class SearchService:
             try:
                 results = await self.search_tavily(query, count)
                 if results:
+                    self.last_provider = "tavily"
+                    self.last_error = None
                     return results
             except Exception as e:
-                logger.warning("search.tavily_failed", error=str(e))
+                self.last_error = type(e).__name__
+                logger.warning(
+                    "search.tavily_failed",
+                    error=redact_secrets(str(e)),
+                )
 
         # Try Brave first
         try:
             results = await self.search_brave(query, count)
             if results:
+                self.last_provider = "brave"
+                self.last_error = None
                 return results
         except Exception as e:
-            logger.warning("search.brave_failed", error=str(e))
+            self.last_error = type(e).__name__
+            logger.warning(
+                "search.brave_failed",
+                error=redact_secrets(str(e)),
+            )
 
         # Then Google CSE
         try:
             results = await self.search_google_cse(query, count)
-            return results
+            if results:
+                self.last_provider = "google_cse"
+                self.last_error = None
+                return results
         except Exception as e:
-            logger.warning("search.google_cse_failed", error=str(e))
+            self.last_error = type(e).__name__
+            logger.warning(
+                "search.google_cse_failed",
+                error=redact_secrets(str(e)),
+            )
             return []
+
+        if self.last_error is None:
+            self.last_error = "no_results"
+        return []
 
     async def extract_content(self, url: str) -> Optional[str]:
         """Extract the main text content from a URL."""
@@ -216,7 +277,11 @@ class SearchService:
             return text[:5000] if text else None
 
         except Exception as e:
-            logger.debug("search.extract.error", url=url[:80], error=str(e))
+            logger.debug(
+                "search.extract.error",
+                url=url[:80],
+                error=redact_secrets(str(e)),
+            )
             return None
 
     async def close(self):

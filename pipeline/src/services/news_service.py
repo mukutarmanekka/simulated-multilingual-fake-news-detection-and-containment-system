@@ -9,6 +9,7 @@ import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config import settings
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -79,7 +80,7 @@ class NewsService:
             return results
 
         except Exception as e:
-            logger.error("news.error", error=str(e))
+            logger.error("news.error", error=redact_secrets(str(e)))
             return []
 
     async def close(self):

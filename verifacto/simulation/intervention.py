@@ -4,12 +4,25 @@ Interventions never mutate the graph. They produce per-edge probability
 maps (D4): effective_p(u,v) = G[u][v]["p"] * post_factor * user_factor(u).
 Centralities and throttled-user selection are always computed on the
 ORIGINAL graph.
+
+Detection is sequential and label-free. Real-mode adapters are awaited
+inside ONE event loop; stub/replay adapters use the synchronous method.
 """
+
+import asyncio
 
 import networkx as nx
 import numpy as np
 
-from ..config import BLANKET_REDUCTION, TARGETED_REDUCTION
+from ..config import (
+    BLANKET_REDUCTION,
+    DETECTOR_ERROR_POLICY,
+    TARGETED_REDUCTION,
+)
+from ..detector.base import (
+    DetectorUnavailableError,
+    error_detection,
+)
 
 
 def blanket_factor(detection):
@@ -30,11 +43,80 @@ def build_prob_map(G, post_factor, throttled=None, throttle_factor=TARGETED_REDU
     return p_map
 
 
-def run_detection(adapter, posts):
-    """One detection per post; the adapter receives only text/language/id."""
+def _provider_name(adapter) -> str:
+    try:
+        return adapter.active_provider()
+    except Exception:
+        return getattr(adapter, "provider", "unknown")
+
+
+def _detector_mode(adapter) -> str:
+    if hasattr(adapter, "detect_async"):
+        return "real"
+    if adapter.__class__.__name__.lower().startswith("replay"):
+        return "replay"
+    return "stub"
+
+
+def _error_record(adapter, post, exc, status="error"):
+    return error_detection(
+        post_id=post.id,
+        text=post.text,
+        language=post.language,
+        source_url=getattr(post, "source_url", None),
+        provider=_provider_name(adapter),
+        detector_mode=_detector_mode(adapter),
+        status=status,
+        error=str(exc),
+    )
+
+
+async def _run_detection_async(adapter, posts, error_policy):
     detections = {}
     for post in posts:
-        detections[post.id] = adapter.detect(post.text, post.language, post.id)
+        try:
+            detections[post.id] = await adapter.detect_async(
+                post.text,
+                post.language,
+                post.id,
+                getattr(post, "source_url", None),
+            )
+        except DetectorUnavailableError:
+            # Configuration failure: abort; never fall back to a stub.
+            raise
+        except Exception as exc:
+            if error_policy == "raise":
+                raise
+            detections[post.id] = _error_record(adapter, post, exc)
+    return detections
+
+
+def run_detection(adapter, posts, error_policy=DETECTOR_ERROR_POLICY):
+    """One detection per post, associated by post id.
+
+    The adapter receives only text/language/id/source URL. The ground-truth
+    label is never passed. Real adapters are awaited in one event loop so
+    their global clients stay bound to a single loop; stub and replay
+    adapters use the synchronous interface.
+    """
+    if hasattr(adapter, "detect_async"):
+        return asyncio.run(_run_detection_async(adapter, posts, error_policy))
+
+    detections = {}
+    for post in posts:
+        try:
+            detections[post.id] = adapter.detect(
+                post.text,
+                post.language,
+                post.id,
+                getattr(post, "source_url", None),
+            )
+        except DetectorUnavailableError:
+            raise
+        except Exception as exc:
+            if error_policy == "raise":
+                raise
+            detections[post.id] = _error_record(adapter, post, exc)
     return detections
 
 

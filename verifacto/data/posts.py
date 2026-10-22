@@ -154,6 +154,7 @@ class Post:
     true_label: str  # "fake" or "real" — hidden ground truth, metrics only
     author: int      # node id in G
     language: str    # ISO 639-1 code, matches the author's block
+    source_url: str | None = None  # optional publisher URL for Tier 4 checking
 
 
 def _fill_placeholders(template, language, rng):

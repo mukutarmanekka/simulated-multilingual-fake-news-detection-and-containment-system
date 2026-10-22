@@ -7,6 +7,8 @@ for accurate relevance scoring.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import structlog
 
 from ..models.schemas import (
@@ -16,6 +18,7 @@ from ..models.schemas import (
     RerankedEvidenceResult,
 )
 from ..utils.temporal import freshness_score, is_time_sensitive
+from ..utils.redaction import redact_secrets
 from ..config import settings
 
 logger = structlog.get_logger()
@@ -134,7 +137,7 @@ def _compute_relevance(claim_text: str, docs: list[RetrievedDocument]) -> list[f
         if not pairs:
             return []
 
-        scores = reranker.predict(pairs)
+        scores = reranker.predict(cast(Any, pairs))
 
         # Normalize scores to 0-1 range (cross-encoder outputs can be negative)
         scores_list = scores.tolist() if hasattr(scores, 'tolist') else list(scores)
@@ -146,6 +149,6 @@ def _compute_relevance(claim_text: str, docs: list[RetrievedDocument]) -> list[f
         return normalized
 
     except Exception as e:
-        logger.warning("reranker.model_error", error=str(e))
+        logger.warning("reranker.model_error", error=redact_secrets(str(e)))
         # Fallback: use credibility as a proxy for relevance
         return [doc.credibility_score for doc in docs]

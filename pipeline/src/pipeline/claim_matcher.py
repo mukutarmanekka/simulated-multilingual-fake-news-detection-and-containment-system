@@ -14,6 +14,8 @@ from ..models.enums import Verdict
 from ..services.vector_service import vector_service
 from ..services.factcheck_service import factcheck_service
 from ..config import settings
+from .claim_equivalence import check_material_equivalence
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -60,35 +62,63 @@ async def match_claim(claim: NormalizedClaim) -> ClaimMatchResult:
         )
 
         if vector_matches:
-            best = vector_matches[0]
-            prev_verdict = best.get("verdict")
+            for match in vector_matches:
+                if match.get("policy_version") != settings.verdict_policy_version:
+                    logger.info(
+                        "claim_matcher.vector_policy_version_rejected",
+                        claim_id=claim.claim_id,
+                        matched_id=match.get("claim_id"),
+                        cached_policy=match.get("policy_version"),
+                        current_policy=settings.verdict_policy_version,
+                    )
+                    continue
 
-            # Skip cached results with weak verdicts — re-verify them
-            if prev_verdict and prev_verdict.upper() == "NOT_ENOUGH_EVIDENCE":
-                logger.info(
-                    "claim_matcher.skip_weak_cache",
-                    claim_id=claim.claim_id,
-                    similarity=best["score"],
-                    previous_verdict=prev_verdict,
-                    reason="Re-verifying stale NOT_ENOUGH_EVIDENCE result",
+                cached_claim_text = match.get("claim_text") or ""
+                guard = check_material_equivalence(
+                    claim_text,
+                    cached_claim_text,
                 )
-            else:
+                if not guard.equivalent:
+                    logger.info(
+                        "claim_matcher.vector_match_rejected",
+                        claim_id=claim.claim_id,
+                        similarity=match.get("score"),
+                        matched_id=match.get("claim_id"),
+                        matched_claim=cached_claim_text[:160],
+                        reason=guard.reason,
+                    )
+                    continue
+
+                prev_verdict = match.get("verdict")
+
+                # Skip cached results with weak verdicts — re-verify them.
+                if prev_verdict and str(prev_verdict).upper() == "NOT_ENOUGH_EVIDENCE":
+                    logger.info(
+                        "claim_matcher.skip_weak_cache",
+                        claim_id=claim.claim_id,
+                        similarity=match["score"],
+                        previous_verdict=prev_verdict,
+                        reason="Re-verifying stale NOT_ENOUGH_EVIDENCE result",
+                    )
+                    continue
+
                 logger.info(
                     "claim_matcher.vector_match",
                     claim_id=claim.claim_id,
-                    similarity=best["score"],
-                    matched_id=best["claim_id"],
+                    similarity=match["score"],
+                    matched_id=match.get("claim_id"),
                 )
                 return ClaimMatchResult(
                     matched_existing_claim=True,
-                    matched_claim_id=best["claim_id"],
+                    matched_claim_id=match.get("claim_id"),
                     match_source="vector_db",
-                    similarity=best["score"],
+                    similarity=match["score"],
                     previous_verdict=prev_verdict,
-                    matched_claim_text=best.get("claim_text"),
+                    previous_confidence=match.get("confidence"),
+                    matched_claim_text=cached_claim_text,
                 )
     except Exception as e:
-        logger.warning("claim_matcher.vector_error", error=str(e))
+        logger.warning("claim_matcher.vector_error", error=redact_secrets(str(e)))
 
     # ── 2. Google Fact Check API ──────────────────────────────
     try:
@@ -139,6 +169,21 @@ async def match_claim(claim: NormalizedClaim) -> ClaimMatchResult:
                 )
 
                 if cosine_sim >= settings.claim_similarity_threshold:
+                    guard = check_material_equivalence(
+                        claim_text,
+                        fc_claim_text,
+                    )
+                    if not guard.equivalent:
+                        logger.info(
+                            "claim_matcher.factcheck_material_mismatch",
+                            claim_id=claim.claim_id,
+                            similarity=round(cosine_sim, 3),
+                            publisher=fc.get("publisher"),
+                            matched_claim=fc_claim_text[:120],
+                            reason=guard.reason,
+                        )
+                        continue
+
                     logger.info(
                         "claim_matcher.factcheck_match",
                         claim_id=claim.claim_id,
@@ -163,7 +208,7 @@ async def match_claim(claim: NormalizedClaim) -> ClaimMatchResult:
                 candidates=len(factchecks),
             )
     except Exception as e:
-        logger.warning("claim_matcher.factcheck_error", error=str(e))
+        logger.warning("claim_matcher.factcheck_error", error=redact_secrets(str(e)))
 
     # ── No match found ────────────────────────────────────────
     logger.info("claim_matcher.no_match", claim_id=claim.claim_id)

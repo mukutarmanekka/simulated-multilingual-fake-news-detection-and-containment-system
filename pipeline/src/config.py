@@ -57,6 +57,33 @@ class Settings(BaseSettings):
     max_evidence_results: int = 10
     top_evidence_count: int = 5
 
+    # ── Tier 4 Source Blacklist ───────────────────────────────
+    # Empty means pipeline/config/blacklisted_sources.json.
+    blacklist_config_path: str = ""
+
+    # ── Internal Vector Cache ─────────────────────────────────
+    # Stamped into cached claims so old-policy verdicts are not reused.
+    verdict_policy_version: str = "verdict_policy_v2"
+
+    # ── User-Facing Verdict Policy ────────────────────────────
+    # Cached/fast-path verdicts use these confidence thresholds.
+    verdict_real_min_confidence: float = 0.65
+    verdict_fake_min_confidence: float = 0.65
+
+    # Evidence-based verdicts use a calibrated support score built from
+    # credible/relevant documents, LLM subclaim alignment, and NLI stance.
+    # The confidence floor prevents a nearly-random verifier from passing.
+    verdict_confidence_floor: float = 0.45
+    verdict_evidence_strength_threshold: float = 0.75
+    verdict_subclaim_alignment_threshold: float = 0.60
+    verdict_stance_alignment_threshold: float = 0.60
+    verdict_stance_conflict_count: int = 2
+
+    verdict_min_source_credibility: float = 0.60
+    verdict_strong_source_credibility: float = 0.80
+    verdict_min_relevance: float = 0.30
+    verdict_min_corroborating_sources: int = 2
+
     # ── Embedding Model ──────────────────────────────────────
     embedding_model: str = "all-MiniLM-L6-v2"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

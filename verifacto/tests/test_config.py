@@ -34,3 +34,12 @@ def test_paths_point_inside_repo():
     assert config.REPO_ROOT.is_dir()
     assert config.PIPELINE_DIR.is_dir()
     assert config.GRAPH_PATH.parent == config.DATA_DIR
+
+
+def test_detection_policy_values_are_safe_defaults():
+    assert config.DETECTOR_ERROR_POLICY in {"record", "raise"}
+    assert config.UNCERTAIN_POLICY in {"no_action", "review"}
+    assert config.DETECTOR_TIMEOUT_SECONDS > 0
+    assert config.DETECTOR_MAX_ATTEMPTS >= 1
+    assert config.DEFAULT_LIVE_MAX_POSTS >= 1
+    assert config.DETECTOR_POLICY_VERSION

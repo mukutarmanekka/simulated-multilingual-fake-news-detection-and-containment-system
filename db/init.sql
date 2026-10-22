@@ -239,5 +239,17 @@ INSERT INTO sources (domain, name, tier, credibility, description) VALUES
     ('snopes.com',          'Snopes',                       'TIER_2', 0.88, 'Fact-checking site'),
     ('politifact.com',      'PolitiFact',                   'TIER_2', 0.87, 'Political fact-checker'),
     ('factcheck.org',       'FactCheck.org',                'TIER_2', 0.88, 'Non-partisan fact-checker'),
-    ('fullfact.org',        'Full Fact',                    'TIER_2', 0.87, 'UK fact-checker')
+    ('fullfact.org',        'Full Fact',                    'TIER_2', 0.87, 'UK fact-checker'),
+    -- Tier 1: Official publisher for a specific entity
+    ('toureiffel.paris',    'Eiffel Tower Official Site',    'TIER_1', 0.90, 'Official Eiffel Tower operator publisher'),
+    -- Tier 2: Reference / educational
+    ('britannica.com',      'Encyclopaedia Britannica',      'TIER_2', 0.85, 'Edited general reference'),
+    -- Tier 3: Reference, educational, and user-generated
+    ('wikipedia.org',       'Wikipedia',                     'TIER_3', 0.65, 'Crowd-edited reference; moderate prior, corroboration required'),
+    ('history.com',         'History.com',                   'TIER_3', 0.72, 'Established history publisher'),
+    ('hnn.us',              'History News Network',          'TIER_3', 0.65, 'History commentary and news publisher'),
+    ('artsandculture.google.com', 'Google Arts & Culture',   'TIER_3', 0.70, 'Curated cultural platform'),
+    ('history.stackexchange.com', 'History Stack Exchange',  'TIER_3', 0.45, 'User-generated Q&A; below evidence gate'),
+    ('youtube.com',         'YouTube',                       'TIER_3', 0.35, 'User-generated video platform'),
+    ('youtu.be',            'YouTube Short Link',            'TIER_3', 0.35, 'User-generated video platform')
 ON CONFLICT (domain) DO NOTHING;

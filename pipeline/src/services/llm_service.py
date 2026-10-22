@@ -18,13 +18,34 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
+    retry_if_exception,
 )
 
 from ..config import settings
+from ..utils.http_retry import RETRYABLE_STATUS_CODES
+from ..utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
+
+
+def _is_retryable_llm_error(exc: BaseException) -> bool:
+    """Retry timeouts, connection failures, and transient API statuses.
+
+    Bad credentials and malformed requests fail immediately instead of
+    consuming the retry budget.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if status is not None:
+        return status in RETRYABLE_STATUS_CODES
+
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+
+    name = type(exc).__name__.lower()
+    return "timeout" in name or "connection" in name or "ratelimit" in name
 
 
 class LLMService:
@@ -87,7 +108,7 @@ class LLMService:
                 )
                 logger.info("llm.init", provider="deepseek", model=settings.deepseek_model)
             except Exception as e:
-                logger.error("llm.deepseek_init_failed", error=str(e))
+                logger.error("llm.deepseek_init_failed", error=redact_secrets(str(e)))
         elif self.provider == "openai-compatible":
             try:
                 from openai import AsyncOpenAI
@@ -102,21 +123,21 @@ class LLMService:
                     base_url=settings.openai_compatible_base_url,
                 )
             except Exception as e:
-                logger.error("llm.openai_compatible_init_failed", error=str(e))
+                logger.error("llm.openai_compatible_init_failed", error=redact_secrets(str(e)))
         elif self.provider == "gemini" and settings.gemini_api_key:
             try:
                 from google import genai
                 self._gemini_client = genai.Client(api_key=settings.gemini_api_key)
                 logger.info("llm.init", provider="gemini", model=settings.gemini_model)
             except Exception as e:
-                logger.error("llm.gemini_init_failed", error=str(e))
+                logger.error("llm.gemini_init_failed", error=redact_secrets(str(e)))
         elif self.provider == "openai" and settings.openai_api_key:
             try:
                 from openai import AsyncOpenAI
                 self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
                 logger.info("llm.init", provider="openai", model=settings.openai_model)
             except Exception as e:
-                logger.error("llm.openai_init_failed", error=str(e))
+                logger.error("llm.openai_init_failed", error=redact_secrets(str(e)))
 
         # Fallback: only if the chosen API provider failed to init
         _any_client = (self._gemini_client or self._openai_client
@@ -160,7 +181,7 @@ class LLMService:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=30),
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(_is_retryable_llm_error),
         reraise=True,
     )
     async def generate_json(
@@ -203,7 +224,11 @@ class LLMService:
                 logger.warning("llm.rate_limited", provider=self.provider,
                                msg="Rate limited — will retry with backoff")
             else:
-                logger.error("llm.error", provider=self.provider, error=error_str)
+                logger.error(
+                    "llm.error",
+                    provider=self.provider,
+                    error=redact_secrets(error_str),
+                )
             raise
 
 
@@ -287,6 +312,10 @@ class LLMService:
         """Generate content using Gemini API (wrapped in thread for async safety)."""
         from google.genai import types
 
+        client = self._gemini_client
+        if client is None:
+            raise RuntimeError("Gemini client is not initialized")
+
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=temperature,
@@ -303,7 +332,7 @@ class LLMService:
         for model_name in candidate_models:
             try:
                 response = await asyncio.to_thread(
-                    self._gemini_client.models.generate_content,
+                    client.models.generate_content,
                     model=model_name,
                     contents=user_prompt,
                     config=config,
@@ -314,7 +343,11 @@ class LLMService:
                 last_error = e
                 err_text = str(e)
                 if any(x in err_text for x in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "not available")):
-                    logger.warning("llm.gemini_model_fallback", failed_model=model_name, error=err_text[:120])
+                    logger.warning(
+                        "llm.gemini_model_fallback",
+                        failed_model=model_name,
+                        error=redact_secrets(err_text)[:120],
+                    )
                     continue
                 raise
 

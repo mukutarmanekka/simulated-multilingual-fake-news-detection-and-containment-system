@@ -60,3 +60,35 @@ def test_multi_claim_aggregation_any_refuted_wins():
         provider="real",
     )
     assert result.is_fake is True
+
+
+# ── Three-way user verdicts from the current pipeline ──────────────
+
+
+def test_fake_on_any_fake_above_threshold():
+    result = map_job_results(
+        [_claim("REAL", 0.9), _claim("FAKE", 0.87)], THRESHOLD, provider="real"
+    )
+    assert result.is_fake is True
+    assert result.confidence == 0.87
+    assert result.verdict_summary == "REFUTED"
+
+
+def test_real_on_real_only():
+    result = map_job_results(
+        [_claim("REAL", 0.91), _claim("REAL", 0.6)], THRESHOLD, provider="real"
+    )
+    assert result.is_fake is False
+    assert result.confidence == 0.91
+    assert result.verdict_summary == "SUPPORTED"
+
+
+def test_uncertain_on_uncertain_verdict():
+    result = map_job_results([_claim("UNCERTAIN", 0.8)], THRESHOLD, provider="real")
+    assert result.is_fake is None
+    assert result.verdict_summary == "UNCERTAIN"
+
+
+def test_uncertain_on_below_threshold_fake():
+    result = map_job_results([_claim("FAKE", 0.49)], THRESHOLD, provider="real")
+    assert result.is_fake is None

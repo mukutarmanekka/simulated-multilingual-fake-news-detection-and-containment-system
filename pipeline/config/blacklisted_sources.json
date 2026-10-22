@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "tier": 4,
+  "tier_name": "BLACKLISTED",
+  "policy": "Tier 4 is a configured publisher-level policy registry, not a universal truth oracle. A match means the publisher is designated as satire, parody, troll, or a known fake-news outlet. Satire and fabricated news are distinct categories. A match short-circuits verification for that publisher's URL; it does not prove that every individual article is factually false.",
+  "categories": {
+    "satire": "Publications whose stated purpose is satirical news. Their articles are fiction by design.",
+    "parody": "Publications that imitate news formats for comedy or commentary.",
+    "troll": "Prank or deliberately provocative sites that publish fabricated content to mislead or bait readers.",
+    "fake_news": "Outlets configured as publishers of fabricated news presented as real reporting."
+  },
+  "domains": {
+    "theonion.com": {
+      "name": "The Onion",
+      "category": "satire",
+      "notes": "US satirical news publication; articles are fiction."
+    },
+    "thefauxy.com": {
+      "name": "The Fauxy",
+      "category": "satire",
+      "notes": "Indian satirical news publication; describes its content as fiction."
+    },
+    "fauxy.com": {
+      "name": "Fauxy (alternate domain)",
+      "category": "satire",
+      "notes": "Alternate/legacy domain associated with the Fauxy satirical brand in press coverage; the primary verified domain is thefauxy.com."
+    },
+    "thebabylonbee.com": {
+      "name": "The Babylon Bee",
+      "category": "satire",
+      "notes": "US satirical news publication."
+    },
+    "clickhole.com": {
+      "name": "ClickHole",
+      "category": "parody",
+      "notes": "Parody publication owned by The Onion."
+    },
+    "thelastlineofdefense.org": {
+      "name": "The Last Line of Defense",
+      "category": "parody",
+      "notes": "Parody news publication."
+    },
+    "huzlers.com": {
+      "name": "Huzlers",
+      "category": "troll",
+      "notes": "Prank website that publishes fabricated stories."
+    },
+    "worldnewsdailyreport.com": {
+      "name": "World News Daily Report",
+      "category": "fake_news",
+      "notes": "Known publisher of fabricated news articles."
+    }
+  }
+}

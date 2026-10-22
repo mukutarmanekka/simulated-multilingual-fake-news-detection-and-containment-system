@@ -18,7 +18,26 @@ def test_deterministic(posts):
 
 def test_no_label_parameter():
     signature = inspect.signature(StubDetector.detect)
-    assert list(signature.parameters) == ["self", "text", "language", "post_id"]
+    assert list(signature.parameters) == [
+        "self",
+        "text",
+        "language",
+        "post_id",
+        "source_url",
+    ]
+
+
+def test_source_url_does_not_change_stub_verdict(posts):
+    detector = StubDetector(posts)
+    post = posts[0]
+    without_source = detector.detect(post.text, post.language, post.id)
+    with_source = detector.detect(
+        post.text,
+        post.language,
+        post.id,
+        "https://www.theonion.com/some-article",
+    )
+    assert without_source == with_source
 
 
 def test_label_independent_at_runtime(posts):

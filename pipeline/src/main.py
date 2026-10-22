@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router as api_router
+from .utils.redaction import redact_secrets
 
 logger = structlog.get_logger()
 
@@ -26,7 +27,7 @@ async def lifespan(app: FastAPI):
         await vector_service.ensure_collection()
         logger.info("pipeline.startup", msg="Qdrant collection ready")
     except Exception as e:
-        logger.warning("pipeline.startup.partial", error=str(e),
+        logger.warning("pipeline.startup.partial", error=redact_secrets(str(e)),
                        msg="Some services failed to init — will retry on first use")
     logger.info("pipeline.startup", msg="Pipeline ready")
     yield

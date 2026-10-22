@@ -11,6 +11,19 @@ Subcommands are added phase by phase:
 
 import argparse
 import json
+import sys
+from pathlib import Path
+
+# The detector logs multilingual claim text. Windows consoles default to a
+# legacy code page, which can turn a successful provider response into a
+# UnicodeEncodeError while logging. Configure UTF-8 before importing/running
+# any detector or simulation service.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 import numpy as np
 
@@ -23,7 +36,11 @@ from .data.posts import generate_posts, load_posts, print_posts_summary, save_po
 from .detector.replay import ReplayDetector
 from .detector.real_adapter import RealDetectorAdapter
 from .detector.stub import StubDetector
-from .evaluation.metrics import build_summary_table, false_positive_cost
+from .evaluation.metrics import (
+    build_summary_table,
+    detector_summary,
+    false_positive_cost,
+)
 from .evaluation.plots import plot_fp_cost_bar, plot_reach_curves, plot_sweep_lines
 from .network.graph_builder import (
     build_language_graph,
@@ -85,7 +102,12 @@ def cmd_baseline(args) -> None:
         all_series[post.id] = post_series
 
     payload = {
-        "meta": {"n_runs": config.N_RUNS, "strategy": "baseline"},
+        "meta": {
+            "n_runs": config.N_RUNS,
+            "strategy": "baseline",
+            "detector": "none",
+            "detector_mode": "none",
+        },
         "series": all_series,
     }
     with open(config.OUTPUT_DIR / "baseline_series.json", "w", encoding="utf-8") as f:
@@ -112,16 +134,27 @@ def cmd_baseline(args) -> None:
 def cmd_precompute(args) -> None:
     from .detector import precompute
 
-    raise SystemExit(precompute.main())
+    posts_path = Path(args.posts_path) if args.posts_path else config.POSTS_PATH
+    raise SystemExit(
+        precompute.main(
+            posts_path=posts_path,
+            pacing=args.pacing,
+            max_posts=args.max_posts,
+            timeout_seconds=args.detector_timeout,
+            recompute_stale=args.recompute_stale,
+        )
+    )
 
 
 def cmd_blanket(args) -> None:
     G = _load_or_build_graph()
-    posts = _load_or_generate_posts(G)
+    posts = _limit_posts(args, _load_or_generate_posts(G))
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    detector = StubDetector(posts)
-    detections = run_detection(detector, posts)
+    detector = _build_detector(args, posts)
+    print(f"detector: {args.detector}")
+    detections = _run_detections(args, detector, posts)
+    summary = detector_summary(posts, detections)
 
     # run both strategies on every post with shared (post, run) seeds
     baseline_results = {}
@@ -158,26 +191,54 @@ def cmd_blanket(args) -> None:
         "Fake posts: reach with and without detection",
     )
 
-    # false-positive cost: real posts wrongly flagged fake get halved too
-    fp_count = 0
-    reach_lost = []
-    for post in posts:
-        if post.true_label != "real":
-            continue
-        if detections[post.id].is_fake is True:
-            fp_count += 1
-            for run in range(config.N_RUNS):
-                base = baseline_results[post.id][run].total_reached
-                protected = blanket_results[post.id][run].total_reached
-                reach_lost.append(base - protected)
+    cost = false_positive_cost(
+        posts,
+        detections,
+        baseline_results,
+        blanket_results,
+        config.N_RUNS,
+    )
     n_real = sum(1 for p in posts if p.true_label == "real")
     print(f"fake posts: mean final fraction (baseline) = "
           f"{np.mean([sum(r) for r in fake_baseline]) / G.number_of_nodes():.3f}")
     print(f"fake posts: mean final fraction (blanket)  = "
           f"{np.mean([sum(r) for r in fake_blanket]) / G.number_of_nodes():.3f}")
-    print(f"false positives: {fp_count}/{n_real} real posts flagged fake")
-    if reach_lost:
-        print(f"real-news reach lost per run (mean): {np.mean(reach_lost):.1f} users")
+    print(f"false positives: {cost['fp_count']}/{n_real} real posts flagged fake")
+    print(
+        f"real-news reach lost per run (mean): "
+        f"{cost['real_reach_lost']['mean']:.1f} users"
+    )
+    print(
+        f"uncertain detections: {cost['uncertain_count']} | "
+        f"detector errors: {cost['error_count']} | "
+        f"blacklisted: {cost['blacklist_count']}"
+    )
+    _print_detector_summary(summary)
+
+    payload = {
+        "meta": _detector_meta(
+            args,
+            posts,
+            n_runs=config.N_RUNS,
+            strategy="blanket",
+        ),
+        "detector_summary": summary,
+        "detections": _detection_payload(posts, detections),
+        "fp_cost": cost,
+        "fake_reach": {
+            "baseline_mean_final_fraction": float(
+                np.mean([sum(r) for r in fake_baseline])
+            ) / G.number_of_nodes(),
+            "blanket_mean_final_fraction": float(
+                np.mean([sum(r) for r in fake_blanket])
+            ) / G.number_of_nodes(),
+        },
+    }
+    _write_output(
+        config.OUTPUT_DIR / "blanket_metrics.json",
+        payload,
+        args.detector,
+    )
     print(f"plot saved to {config.OUTPUT_DIR / 'blanket_vs_baseline.png'}")
 
 
@@ -188,25 +249,126 @@ def _build_detector(args, posts):
         if not config.CACHE_PATH.exists():
             print("no detector cache found — run `python -m verifacto.main precompute` first")
             raise SystemExit(1)
-        return ReplayDetector()
+        return ReplayDetector(
+            expected_provider=getattr(args, "cache_provider", None),
+            expected_model=getattr(args, "cache_model", None),
+        )
     if args.detector == "real":
         if not args.allow_live:
             print("live detection is slow and non-deterministic; pass --allow-live to proceed")
             raise SystemExit(1)
-        return RealDetectorAdapter()
+        return RealDetectorAdapter(
+            timeout_seconds=getattr(
+                args, "detector_timeout", config.DETECTOR_TIMEOUT_SECONDS
+            ),
+            error_policy=getattr(
+                args, "detector_error_policy", config.DETECTOR_ERROR_POLICY
+            ),
+        )
     raise ValueError(f"unknown detector: {args.detector}")
+
+
+def _limit_posts(args, posts):
+    """Apply the live-call bound; real mode defaults to a small subset."""
+    limit = getattr(args, "max_posts", None)
+    if limit is None and getattr(args, "detector", "stub") == "real":
+        limit = config.DEFAULT_LIVE_MAX_POSTS
+    if limit is None:
+        return posts
+    limited = posts[:limit]
+    print(
+        f"posts: {len(limited)}/{len(posts)} selected "
+        f"(max_posts={limit})"
+    )
+    return limited
+
+
+def _run_detections(args, detector, posts):
+    return run_detection(
+        detector,
+        posts,
+        error_policy=getattr(
+            args, "detector_error_policy", config.DETECTOR_ERROR_POLICY
+        ),
+    )
+
+
+def _detection_payload(posts, detections):
+    return {
+        str(post.id): detections[post.id].to_dict()
+        for post in posts
+    }
+
+
+def _detector_meta(args, posts, **extra):
+    meta = {
+        "detector": getattr(args, "detector", "stub"),
+        "detector_mode": getattr(args, "detector", "stub"),
+        "n_posts": len(posts),
+        "detector_error_policy": getattr(
+            args, "detector_error_policy", config.DETECTOR_ERROR_POLICY
+        ),
+        "uncertainty_policy": config.UNCERTAIN_POLICY,
+        "seed": config.SEED_MASTER,
+    }
+    meta.update(extra)
+    return meta
+
+
+def _write_output(path, payload, detector_mode):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    mode_path = path.with_name(f"{path.stem}_{detector_mode}{path.suffix}")
+    with open(mode_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    print(f"saved {path} and {mode_path}")
+
+
+def _print_detector_summary(summary):
+    print("\n=== detector summary ===")
+    print(f"verdicts: {summary['verdict_counts']}")
+    print(f"status: {summary['status_counts']}")
+    print(
+        f"blacklisted: {summary['blacklist_count']} | "
+        f"uncertain: {summary['uncertain_count']} "
+        f"({summary['uncertain_fraction']:.1%}) | "
+        f"no claims: {summary['no_claims_count']} | "
+        f"errors: {summary['error_count']} "
+        f"({summary['error_fraction']:.1%})"
+    )
+    print(
+        f"mean confidence: {summary['mean_confidence']:.3f} | "
+        f"mean support: {summary['mean_support_score']:.3f} | "
+        f"mean latency: {summary['mean_latency_ms']:.0f} ms"
+    )
+    print(
+        f"false-positive rate: {summary['false_positive_rate']:.1%} | "
+        f"dangerous false-negative rate: "
+        f"{summary['dangerous_false_negative_rate']:.1%} | "
+        f"fake not flagged: {summary['fake_not_flagged_rate']:.1%}"
+    )
+    if summary["provider_usage"]:
+        print(f"provider usage: {summary['provider_usage']}")
+    if config.UNCERTAIN_POLICY == "review":
+        print(
+            f"uncertain review queue: {summary['uncertain_count']} posts "
+            "(no diffusion action)"
+        )
 
 
 def cmd_targeted(args) -> None:
     G = _load_or_build_graph()
-    posts = _load_or_generate_posts(G)
+    posts = _limit_posts(args, _load_or_generate_posts(G))
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     n_runs = args.runs
     k = args.k
 
     detector = _build_detector(args, posts)
     print(f"detector: {args.detector}")
-    detections = run_detection(detector, posts)
+    detections = _run_detections(args, detector, posts)
+    summary = detector_summary(posts, detections)
+    _print_detector_summary(summary)
 
     # centralities computed once on the original graph, shared by all posts
     centralities = precompute_centralities(G)
@@ -286,12 +448,17 @@ def cmd_targeted(args) -> None:
     plot_fp_cost_bar(costs, config.OUTPUT_DIR / "fp_cost_bar.png")
 
     payload = {
-        "meta": {"detector": args.detector, "n_runs": n_runs, "k": k},
+        "meta": _detector_meta(args, posts, n_runs=n_runs, k=k),
+        "detector_summary": summary,
+        "detections": _detection_payload(posts, detections),
         "summary": table,
         "fp_cost": costs,
     }
-    with open(config.OUTPUT_DIR / "metrics.json", "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    _write_output(
+        config.OUTPUT_DIR / "metrics.json",
+        payload,
+        args.detector,
+    )
 
     print(f"\ncharts and metrics saved to {config.OUTPUT_DIR}")
 
@@ -386,14 +553,16 @@ def _run_budget_block(
 
 def cmd_compare(args) -> None:
     G = _load_or_build_graph()
-    posts = _load_or_generate_posts(G)
+    posts = _limit_posts(args, _load_or_generate_posts(G))
     detector = _build_detector(args, posts)
-    detections = run_detection(detector, posts)
+    detections = _run_detections(args, detector, posts)
+    summary = detector_summary(posts, detections)
     n_runs = args.runs
     budgets = args.budgets
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"compare: detector={args.detector}, runs={n_runs}, budgets={budgets}")
+    _print_detector_summary(summary)
 
     centralities = precompute_centralities(G)
 
@@ -438,11 +607,18 @@ def cmd_compare(args) -> None:
         )
 
     payload = {
-        "meta": {"detector": args.detector, "n_runs": n_runs, "budgets": budgets},
+        "meta": _detector_meta(
+            args, posts, n_runs=n_runs, budgets=budgets
+        ),
+        "detector_summary": summary,
+        "detections": _detection_payload(posts, detections),
         "rows": table_rows,
     }
-    with open(config.OUTPUT_DIR / "compare_metrics.json", "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    _write_output(
+        config.OUTPUT_DIR / "compare_metrics.json",
+        payload,
+        args.detector,
+    )
     print(f"\ncharts and table saved to {config.OUTPUT_DIR}")
 
 
@@ -532,7 +708,14 @@ def cmd_sweep(args) -> None:
     )
 
     payload = {
-        "meta": {"mode": args.mode, "n_runs": n_runs, "k": k, "values": args.values},
+        "meta": {
+            "mode": args.mode,
+            "n_runs": n_runs,
+            "k": k,
+            "values": args.values,
+            "detector": "stub",
+            "detector_mode": "stub",
+        },
         "rankings": [{"value": value, "order": order} for value, order in rankings],
         "rows": sweep_rows,
     }
@@ -549,9 +732,10 @@ def cmd_bridges(args) -> None:
 
 def cmd_priority(args) -> None:
     G = _load_or_build_graph()
-    posts = _load_or_generate_posts(G)
+    posts = _limit_posts(args, _load_or_generate_posts(G))
     detector = _build_detector(args, posts)
-    detections = run_detection(detector, posts)
+    detections = _run_detections(args, detector, posts)
+    summary = detector_summary(posts, detections)
     ranked = rank_flagged_posts(G, posts, detections, eval_runs=args.runs)
     print("=== flagged posts by expected harm (priority = confidence x expected reach) ===")
     for post_id, priority, confidence, reach in ranked[:20]:
@@ -560,13 +744,36 @@ def cmd_priority(args) -> None:
             f"(confidence {confidence:.2f} x expected reach {reach:6.1f})"
         )
     print(f"  ... {len(ranked)} flagged posts total")
+    _print_detector_summary(summary)
+
+    payload = {
+        "meta": _detector_meta(args, posts, eval_runs=args.runs),
+        "detector_summary": summary,
+        "detections": _detection_payload(posts, detections),
+        "ranked": [
+            {
+                "post_id": post_id,
+                "priority": priority,
+                "confidence": confidence,
+                "expected_reach": reach,
+            }
+            for post_id, priority, confidence, reach in ranked
+        ],
+    }
+    _write_output(
+        config.OUTPUT_DIR / "priority.json",
+        payload,
+        args.detector,
+    )
 
 
 def cmd_greedy(args) -> None:
     G = _load_or_build_graph()
-    posts = _load_or_generate_posts(G)
+    posts = _limit_posts(args, _load_or_generate_posts(G))
     detector = _build_detector(args, posts)
-    detections = run_detection(detector, posts)
+    detections = _run_detections(args, detector, posts)
+    summary = detector_summary(posts, detections)
+    _print_detector_summary(summary)
     n_runs = args.runs
     k = args.k
 
@@ -611,11 +818,14 @@ def cmd_greedy(args) -> None:
             f"reduction {row['relative_reduction_vs_baseline'] * 100:.0f}% | "
             f"users throttled {row['interventions']['users_throttled']}"
         )
+    costs = {}
     for strategy in ("betweenness", "greedy"):
         cost = false_positive_cost(posts, detections, results["baseline"], results[strategy], n_runs)
+        costs[strategy] = cost
         print(
             f"{strategy:>11}: FP cost — {cost['fp_count']} real posts flagged, "
-            f"{cost['real_reach_lost']['mean']:.1f} users of real-news reach lost per run"
+            f"{cost['real_reach_lost']['mean']:.1f} users of real-news reach lost per run, "
+            f"{cost['uncertain_count']} uncertain, {cost['error_count']} errors"
         )
 
     curves = [
@@ -635,7 +845,57 @@ def cmd_greedy(args) -> None:
         config.OUTPUT_DIR / "greedy_comparison.png",
         "Fake posts: greedy vs betweenness vs baseline (mean ± std)",
     )
+
+    payload = {
+        "meta": _detector_meta(
+            args, posts, n_runs=n_runs, k=k, pool=args.pool
+        ),
+        "detector_summary": summary,
+        "detections": _detection_payload(posts, detections),
+        "selected_users": selected,
+        "summary": table,
+        "fp_cost": costs,
+    }
+    _write_output(
+        config.OUTPUT_DIR / "greedy_metrics.json",
+        payload,
+        args.detector,
+    )
     print(f"\nchart saved to {config.OUTPUT_DIR / 'greedy_comparison.png'}")
+
+
+def _add_detector_integration_args(parser):
+    parser.add_argument(
+        "--max-posts",
+        type=int,
+        default=None,
+        help=(
+            "limit the posts processed; real mode defaults to "
+            f"{config.DEFAULT_LIVE_MAX_POSTS} unless this is set"
+        ),
+    )
+    parser.add_argument(
+        "--detector-timeout",
+        type=float,
+        default=config.DETECTOR_TIMEOUT_SECONDS,
+        help="per-post real-detector timeout in seconds",
+    )
+    parser.add_argument(
+        "--detector-error-policy",
+        choices=["record", "raise"],
+        default=config.DETECTOR_ERROR_POLICY,
+        help="record a structured error (no action) or abort on detector failure",
+    )
+    parser.add_argument(
+        "--cache-provider",
+        default=None,
+        help="replay only: require this provider in every cache entry",
+    )
+    parser.add_argument(
+        "--cache-model",
+        default=None,
+        help="replay only: require this model in every cache entry",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -659,11 +919,36 @@ def build_parser() -> argparse.ArgumentParser:
     sub_blanket = subparsers.add_parser(
         "blanket", help="detector + blanket halving of flagged fakes"
     )
+    sub_blanket.add_argument(
+        "--detector", choices=["stub", "replay", "real"], default="stub"
+    )
+    sub_blanket.add_argument("--allow-live", action="store_true")
+    _add_detector_integration_args(sub_blanket)
     sub_blanket.set_defaults(func=cmd_blanket)
 
     sub_precompute = subparsers.add_parser(
         "precompute",
-        help="run the real detector over the corpus and cache verdicts (once, ~1h)",
+        help="run the real detector over the corpus and cache verdicts",
+    )
+    sub_precompute.add_argument(
+        "--posts-path", default=None,
+        help="optional custom posts JSON (e.g. a corpus with source_url values)",
+    )
+    sub_precompute.add_argument(
+        "--max-posts", type=int, default=None,
+        help="process at most this many posts in this run",
+    )
+    sub_precompute.add_argument(
+        "--pacing", type=float, default=config.PACING_SECONDS,
+        help="seconds between live posts",
+    )
+    sub_precompute.add_argument(
+        "--detector-timeout", type=float,
+        default=config.DETECTOR_TIMEOUT_SECONDS,
+    )
+    sub_precompute.add_argument(
+        "--recompute-stale", action="store_true",
+        help="rebuild entries whose policy version is missing or stale",
     )
     sub_precompute.set_defaults(func=cmd_precompute)
 
@@ -680,6 +965,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-live", action="store_true",
         help="allow live real-detector calls (slow, non-deterministic)",
     )
+    _add_detector_integration_args(sub_targeted)
     sub_targeted.set_defaults(func=cmd_targeted)
 
     sub_compare = subparsers.add_parser(
@@ -694,6 +980,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub_compare.add_argument("--greedy-pool", type=int, default=60)
     sub_compare.add_argument("--greedy-runs", type=int, default=5)
     sub_compare.add_argument("--allow-live", action="store_true")
+    _add_detector_integration_args(sub_compare)
     sub_compare.set_defaults(func=cmd_compare)
 
     sub_sweep = subparsers.add_parser(
@@ -721,6 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--detector", choices=["stub", "replay", "real"], default="stub"
     )
     sub_priority.add_argument("--runs", type=int, default=10)
+    sub_priority.add_argument("--allow-live", action="store_true")
+    _add_detector_integration_args(sub_priority)
     sub_priority.set_defaults(func=cmd_priority)
 
     sub_greedy = subparsers.add_parser(
@@ -733,6 +1022,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub_greedy.add_argument("--k", type=int, default=10)
     sub_greedy.add_argument("--pool", type=int, default=60)
     sub_greedy.add_argument("--allow-live", action="store_true")
+    _add_detector_integration_args(sub_greedy)
     sub_greedy.set_defaults(func=cmd_greedy)
 
     return parser

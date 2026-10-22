@@ -1,0 +1,604 @@
+{
+  "version": 1,
+  "description": "Policy-level labelled validation set for the user-facing verdict policy. Each case supplies the verifier verdict, subclaim verdicts, evidence credibility/relevance, and NLI stances. It measures the verdict policy and evidence gates, not end-to-end retrieval accuracy. Live integration tests cover the end-to-end path separately.",
+  "cases": [
+    {
+      "id": "real_official_eiffel",
+      "claim": "The Eiffel Tower was completed in 1889.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://www.toureiffel.paris/en/the-monument/history",
+      "confidence": 0.50,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED", "SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "toureiffel.paris", "credibility": 0.90, "relevance": 0.90, "is_primary": true, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "artsandculture.google.com", "credibility": 0.70, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "reddit.com", "credibility": 0.35, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d4", "domain": "youtube.com", "credibility": 0.35, "relevance": 0.75, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_multi_wire",
+      "claim": "The ceasefire agreement was signed on Tuesday.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://www.reuters.com/world/",
+      "confidence": 0.80,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED", "SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "reuters.com", "credibility": 0.94, "relevance": 0.90, "is_primary": false, "stance": "SUPPORTS"},
+        {"doc_id": "d2", "domain": "apnews.com", "credibility": 0.94, "relevance": 0.90, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "real_single_official",
+      "claim": "The agency approved the new drug on 12 May.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://www.fda.gov/news-events",
+      "confidence": 0.75,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "fda.gov", "credibility": 0.91, "relevance": 0.90, "is_primary": true, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_two_reference",
+      "claim": "The bridge was completed in the 1930s.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://www.britannica.com/",
+      "confidence": 0.70,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_nli_supports",
+      "claim": "The museum opened to the public in 1997.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://example.com/museum",
+      "confidence": 0.85,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": []
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.80, "relevance": 0.85, "is_primary": false, "stance": "SUPPORTS"},
+        {"doc_id": "d2", "domain": "example.net", "credibility": 0.80, "relevance": 0.80, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "real_three_credible",
+      "claim": "The population of the city exceeded one million in 2020.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://example.com/census",
+      "confidence": 0.78,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "worldbank.org", "credibility": 0.93, "relevance": 0.88, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.82, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "history.com", "credibility": 0.72, "relevance": 0.75, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_single_unknown",
+      "claim": "A local group planted 500 trees last weekend.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://unknown.example/story",
+      "confidence": 0.60,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "unknown.example", "credibility": 0.50, "relevance": 0.90, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "real_neutral_no_subclaims",
+      "claim": "The company was founded in 1984.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/company",
+      "confidence": 0.85,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": []
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.90, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "example.net", "credibility": 0.90, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_low_confidence",
+      "claim": "The manuscript was dated to the 12th century.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/manuscript",
+      "confidence": 0.40,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_irrelevant",
+      "claim": "The lake is the deepest in the region.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/lake",
+      "confidence": 0.80,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.10, "is_primary": false, "stance": "SUPPORTS"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.10, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "real_conflicting_subclaims",
+      "claim": "The policy reduced unemployment.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/economy",
+      "confidence": 0.70,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED", "REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_nli_contradicts",
+      "claim": "The event took place in the northern region.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/event",
+      "confidence": 0.70,
+      "verification": {
+        "verdict": "SUPPORTED",
+        "subclaims": ["SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.90, "relevance": 0.85, "is_primary": false, "stance": "REFUTES"},
+        {"doc_id": "d2", "domain": "example.net", "credibility": 0.90, "relevance": 0.80, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "fake_great_wall",
+      "claim": "The Great Wall of China was built by the Romans.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://www.britannica.com/topic/Great-Wall-of-China",
+      "confidence": 0.48,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED", "REFUTED", "SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "history.com", "credibility": 0.72, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "wikipedia.org", "credibility": 0.65, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "hnn.us", "credibility": 0.65, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d4", "domain": "history.stackexchange.com", "credibility": 0.45, "relevance": 0.75, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d5", "domain": "facebook.com", "credibility": 0.30, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_multi_wire",
+      "claim": "The minister resigned on Monday.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://www.reuters.com/world/",
+      "confidence": 0.80,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED", "REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "reuters.com", "credibility": 0.94, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "apnews.com", "credibility": 0.94, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_single_factcheck",
+      "claim": "The vaccine contains a tracking microchip.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://www.factcheck.org/",
+      "confidence": 0.75,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "factcheck.org", "credibility": 0.88, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_nli_refutes",
+      "claim": "The city is located on the southern coast.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://example.com/city",
+      "confidence": 0.85,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": []
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.80, "relevance": 0.85, "is_primary": false, "stance": "REFUTES"},
+        {"doc_id": "d2", "domain": "example.net", "credibility": 0.80, "relevance": 0.80, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "fake_three_credible",
+      "claim": "The election was held in 2019.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://example.com/election",
+      "confidence": 0.78,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "worldbank.org", "credibility": 0.93, "relevance": 0.88, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.82, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "history.com", "credibility": 0.72, "relevance": 0.75, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_single_weak",
+      "claim": "A local shop was closed by the council.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://unknown.example/story",
+      "confidence": 0.60,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "unknown.example", "credibility": 0.50, "relevance": 0.90, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "fake_low_confidence",
+      "claim": "The report was published in 2001.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/report",
+      "confidence": 0.40,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "REFUTES"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "fake_irrelevant",
+      "claim": "The building is the tallest in the country.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/building",
+      "confidence": 0.80,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.10, "is_primary": false, "stance": "REFUTES"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.10, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "fake_conflicting_subclaims",
+      "claim": "The law was repealed last year.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/law",
+      "confidence": 0.70,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["SUPPORTED", "REFUTED", "SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_core_refuted_aux_supported",
+      "claim": "The Great Wall of China was built by the Romans.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://www.britannica.com/topic/Great-Wall-of-China",
+      "confidence": 0.49,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED", "SUPPORTED", "SUPPORTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "history.com", "credibility": 0.72, "relevance": 0.40, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "wikipedia.org", "credibility": 0.65, "relevance": 0.59, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "hnn.us", "credibility": 0.65, "relevance": 0.32, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_neutral_no_subclaims",
+      "claim": "The expedition reached the pole in 1908.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/expedition",
+      "confidence": 0.80,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": []
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.90, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "example.net", "credibility": 0.90, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_nli_supports",
+      "claim": "The disease was eradicated in 2010.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/disease",
+      "confidence": 0.70,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.90, "relevance": 0.85, "is_primary": false, "stance": "SUPPORTS"},
+        {"doc_id": "d2", "domain": "example.net", "credibility": 0.90, "relevance": 0.80, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "ambiguous_budget",
+      "claim": "The Eiffel Tower's 2026 refurbishment budget is 42 million euros.",
+      "ground_truth": "AMBIGUOUS",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://www.toureiffel.paris/en/news/works",
+      "confidence": 0.50,
+      "verification": {
+        "verdict": "NOT_ENOUGH_EVIDENCE",
+        "subclaims": ["SUPPORTED", "NOT_ENOUGH_EVIDENCE", "NOT_ENOUGH_EVIDENCE"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "news.artnet.com", "credibility": 0.65, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "toureiffel.paris", "credibility": 0.90, "relevance": 0.85, "is_primary": true, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "parispropertygroup.com", "credibility": 0.50, "relevance": 0.75, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "ambiguous_conflicting",
+      "claim": "The new policy increased average wages.",
+      "ground_truth": "AMBIGUOUS",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/wages",
+      "confidence": 0.65,
+      "verification": {
+        "verdict": "CONFLICTING",
+        "subclaims": ["SUPPORTED", "REFUTED"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "SUPPORTS"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "ambiguous_no_evidence",
+      "claim": "The lost manuscript was found in a private collection.",
+      "ground_truth": "AMBIGUOUS",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/manuscript",
+      "confidence": 0.15,
+      "verification": {
+        "verdict": "NOT_ENOUGH_EVIDENCE",
+        "subclaims": []
+      },
+      "evidence": []
+    },
+    {
+      "id": "ambiguous_refuted_weak",
+      "claim": "The Eiffel Tower's 2026 refurbishment budget is 42 million euros.",
+      "ground_truth": "AMBIGUOUS",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://www.toureiffel.paris/en/news/works",
+      "confidence": 0.46,
+      "verification": {
+        "verdict": "REFUTED",
+        "subclaims": ["SUPPORTED", "REFUTED", "NOT_ENOUGH_EVIDENCE"]
+      },
+      "evidence": [
+        {"doc_id": "d1", "domain": "news.artnet.com", "credibility": 0.65, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "toureiffel.paris", "credibility": 0.90, "relevance": 0.85, "is_primary": true, "stance": "NEUTRAL"},
+        {"doc_id": "d3", "domain": "parispropertygroup.com", "credibility": 0.50, "relevance": 0.75, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_single_moderate",
+      "claim": "The observatory was founded in 1892.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/observatory",
+      "confidence": 0.70,
+      "verification": {"verdict": "SUPPORTED", "subclaims": ["SUPPORTED"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.79, "relevance": 0.90, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "fake_single_moderate",
+      "claim": "The observatory was founded in 1912.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/observatory",
+      "confidence": 0.70,
+      "verification": {"verdict": "REFUTED", "subclaims": ["REFUTED"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.79, "relevance": 0.90, "is_primary": false, "stance": "REFUTES"}
+      ]
+    },
+    {
+      "id": "real_single_strong",
+      "claim": "The observatory was founded in 1892.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://example.com/observatory",
+      "confidence": 0.72,
+      "verification": {"verdict": "SUPPORTED", "subclaims": ["SUPPORTED"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.80, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_single_strong",
+      "claim": "The observatory was founded in 1912.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://example.com/observatory",
+      "confidence": 0.72,
+      "verification": {"verdict": "REFUTED", "subclaims": ["REFUTED"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "example.org", "credibility": 0.80, "relevance": 0.90, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_primary_moderate",
+      "claim": "The park opened to visitors in 1975.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://official.example/park",
+      "confidence": 0.68,
+      "verification": {"verdict": "SUPPORTED", "subclaims": ["SUPPORTED"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "official.example", "credibility": 0.70, "relevance": 0.90, "is_primary": true, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_partial_support",
+      "claim": "The bridge was completed in 1932 and designed by an engineer.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/bridge",
+      "confidence": 0.70,
+      "verification": {"verdict": "SUPPORTED", "subclaims": ["SUPPORTED", "NOT_ENOUGH_EVIDENCE"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_partial_refutation",
+      "claim": "The bridge was completed in 1942 and designed by an engineer.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://example.com/bridge",
+      "confidence": 0.70,
+      "verification": {"verdict": "REFUTED", "subclaims": ["REFUTED", "NOT_ENOUGH_EVIDENCE"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_mostly_supported",
+      "claim": "The novel was published in 1954 and won a prize.",
+      "ground_truth": "REAL",
+      "expected_verdict": "REAL",
+      "source_url": "https://example.com/novel",
+      "confidence": 0.74,
+      "verification": {"verdict": "SUPPORTED", "subclaims": ["SUPPORTED", "SUPPORTED", "NOT_ENOUGH_EVIDENCE"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "fake_mostly_refuted",
+      "claim": "The novel was published in 1964 and won a prize.",
+      "ground_truth": "FAKE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://example.com/novel",
+      "confidence": 0.74,
+      "verification": {"verdict": "REFUTED", "subclaims": ["REFUTED", "REFUTED", "NOT_ENOUGH_EVIDENCE"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "NEUTRAL"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "NEUTRAL"}
+      ]
+    },
+    {
+      "id": "real_subclaim_conflict_nli_supports",
+      "claim": "The policy reduced unemployment and raised wages.",
+      "ground_truth": "REAL",
+      "expected_verdict": "UNCERTAIN",
+      "source_url": "https://example.com/policy",
+      "confidence": 0.80,
+      "verification": {"verdict": "SUPPORTED", "subclaims": ["SUPPORTED", "REFUTED"]},
+      "evidence": [
+        {"doc_id": "d1", "domain": "britannica.com", "credibility": 0.85, "relevance": 0.85, "is_primary": false, "stance": "SUPPORTS"},
+        {"doc_id": "d2", "domain": "history.com", "credibility": 0.72, "relevance": 0.80, "is_primary": false, "stance": "SUPPORTS"}
+      ]
+    },
+    {
+      "id": "satire_onion",
+      "claim": "The moon is made of cheese, according to a new study.",
+      "ground_truth": "SATIRE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://www.theonion.com/some-article",
+      "blacklisted": true,
+      "confidence": 1.0,
+      "verification": {"verdict": "NOT_ENOUGH_EVIDENCE", "subclaims": []},
+      "evidence": []
+    },
+    {
+      "id": "satire_parody",
+      "claim": "Local man becomes first to swim to the moon.",
+      "ground_truth": "SATIRE",
+      "expected_verdict": "FAKE",
+      "source_url": "https://clickhole.com/some-article",
+      "blacklisted": true,
+      "confidence": 1.0,
+      "verification": {"verdict": "NOT_ENOUGH_EVIDENCE", "subclaims": []},
+      "evidence": []
+    }
+  ]
+}

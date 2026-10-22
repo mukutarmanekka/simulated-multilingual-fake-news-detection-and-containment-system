@@ -80,3 +80,7 @@ build/
 *.egg-info/
 node_modules/
 
+# Video production assets
+video/
+Video/
+

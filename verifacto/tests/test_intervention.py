@@ -2,6 +2,7 @@
 provably cannot increase reach (the D3 dominance contract)."""
 
 import numpy as np
+import pytest
 
 from verifacto import config
 from verifacto.data.posts import generate_posts
@@ -27,6 +28,17 @@ def _real_detection():
     return DetectionResult(is_fake=False, confidence=0.8, verdict_summary="SUPPORTED", provider="stub")
 
 
+def _uncertain_detection():
+    return DetectionResult(
+        is_fake=None,
+        confidence=0.5,
+        verdict_summary="UNCERTAIN",
+        provider="deepseek",
+        verdict="UNCERTAIN",
+        detector_mode="real",
+    )
+
+
 def test_blanket_halves_flagged(graph):
     p_map = build_prob_map(graph, blanket_factor(_fake_detection()))
     for u, v in graph.edges():
@@ -49,6 +61,30 @@ def test_targeted_only_selected_users(graph):
             assert p_map[(u, v)] == graph[u][v]["p"] * config.TARGETED_REDUCTION
         else:
             assert p_map[(u, v)] == graph[u][v]["p"]
+
+
+def test_real_and_uncertain_get_no_targeted_intervention(graph):
+    for detection in (_real_detection(), _uncertain_detection()):
+        p_maps = build_strategy_p_maps(graph, detection, "degree", 3)
+        assert all(p_map is None for p_map in p_maps.values())
+
+
+def test_uncertain_gets_no_blanket_intervention(graph):
+    assert blanket_factor(_uncertain_detection()) == 1.0
+    p_maps = build_strategy_p_maps(graph, _uncertain_detection(), "blanket", 2)
+    assert all(p_map is None for p_map in p_maps.values())
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    ["baseline", "blanket", "random", "degree", "betweenness", "pagerank"],
+)
+def test_every_strategy_handles_uncertain_without_action(graph, strategy):
+    p_maps = build_strategy_p_maps(
+        graph, _uncertain_detection(), strategy, 2
+    )
+    assert set(p_maps) == {0, 1}
+    assert all(p_map is None for p_map in p_maps.values())
 
 
 def test_graph_never_mutated(graph):
